@@ -1,15 +1,4 @@
-"""Route each page to the rails it needs, then run only those rails.
-
-Rails
------
-text    pdfminer text layer, already present from V1
-table   pdfplumber grid -> Markdown (deterministic, offline, no API cost)
-ocr     vision model transcribes a page with no text layer
-figure  vision model describes a diagram, arrows included
-
-Every decision is recorded so the UI can show the sub-process instead of
-just the final text: which route fired, why, how long it took, what it produced.
-"""
+"""Route each page to the rails it needs, then run only those rails."""
 
 import logging
 import re
@@ -24,8 +13,7 @@ from rag.ingest.table import tables_to_markdown
 
 log = logging.getLogger(__name__)
 
-# OCR that yields less than this on an almost fully covered page means the page
-# is a picture, not a scanned document -> ask the figure route as well.
+# OCR text this short on a fully covered page means the page is a picture.
 PICTURE_TEXT_MAX = 120
 PICTURE_COVER_MIN = 0.6
 
@@ -209,11 +197,7 @@ def enhance(
                 for item in tables:
                     blocks.append(Block("table", item, "pdfplumber", table_ms))
 
-                # The raw text of a table page already contains the same rows, only
-                # flattened. Dropping the whole text block would also lose the prose
-                # around a table, so only the lines the table already covers are
-                # removed; a page whose entire text is the table ends up with no text
-                # block at all.
+                # Drop only lines the table already covers, so prose survives.
                 text_block = next((b for b in blocks if b.type == "text"), None)
                 table_chars = sum(len(item) for item in tables)
                 replaced = False
@@ -234,9 +218,7 @@ def enhance(
                 # The planner already judged this page to be a diagram.
                 wants_figure = True
             elif "ocr" in plan.routes and cover >= PICTURE_COVER_MIN:
-                # A scanned page is one full-page image, so coverage alone cannot
-                # tell text from a picture. OCR output decides: almost no text on a
-                # fully covered page means the page is a diagram.
+                # Coverage cannot separate a scanned page from a picture; OCR volume can.
                 ocr_text = next((b.text for b in blocks if b.type == "ocr"), "")
                 wants_figure = len(ocr_text) < PICTURE_TEXT_MAX
             else:

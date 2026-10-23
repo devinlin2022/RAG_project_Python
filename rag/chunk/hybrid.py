@@ -1,22 +1,7 @@
 """Structure-first chunking, with an optional semantic pass inside a section.
 
-`structured` cuts only at heading boundaries; anything oversized is cut on
-paragraph/sentence separators. `hybrid` does the same but cuts oversized sections
-on semantic breakpoints, so the two differ in exactly one place and can be
-compared fairly.
-
-Emission rule, which is the whole point of this module:
-
-- A single clause is never cut. 第三条 may be 40 chars; leaving it alone is correct.
-- Consecutive sections are accumulated up to `size`, so a chunk usually holds
-  2-4 complete clauses instead of one tiny fragment each.
-- The accumulator resets when the top-level ancestor changes, so a chunk never
-  straddles 第二章 and 第三章.
-- Tables are never concatenated with prose: they keep their Markdown structure and
-  the header is repeated on every fragment.
-
-Without the accumulation step this module produced 17 chunks averaging 43 chars on
-a 950-char contract, which is worse than no chunking at all.
+Never cut a clause; accumulate siblings up to the size budget; reset at the
+top-level ancestor so a chunk cannot straddle two chapters.
 """
 
 from rag.chunk.recursive import split_recursive
@@ -53,8 +38,7 @@ def chunk_structured(
     if not sections:
         return [], {"sections": 0, "oversized": 0, "semantic_inside": semantic_inside}
 
-    # Without an embedding endpoint the semantic pass would fail once per
-    # oversized section; fall back to character splitting up front instead.
+    # No embedding endpoint: skip the pass instead of failing once per section.
     if semantic_inside and not embed_ready():
         semantic_inside = False
         semantic_skipped = True
@@ -174,9 +158,7 @@ def chunk_structured(
 
     flush()
 
-    # A short trailing chunk is merged back when it still fits: a 30-char orphan
-    # at the end of a chapter retrieves worse than nothing. Never across a top-level
-    # boundary, or the citation would name the wrong clause.
+    # Merge a short tail only within the same top-level section.
     if len(chunks) >= 2:
         tail = chunks[-1]
         head = chunks[-2]

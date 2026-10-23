@@ -1,4 +1,4 @@
-"""Strategy dispatch and side-by-side comparison."""
+"""Strategy dispatch and comparison."""
 
 import time
 

@@ -96,7 +96,7 @@ LLM_TIMEOUT=90
 
 | 用途 | 国内站 | 国际站 |
 | --- | --- | --- |
-| OCR / 图注 | `PaddlePaddle/PaddleOCR-VL-1.5`、`Qwen/Qwen2.5-VL-72B-Instruct` | `Qwen/Qwen3-VL-32B-Instruct`、`Qwen/Qwen3-VL-8B-Instruct` |
+| OCR / 图注 | `Qwen/Qwen3-VL-32B-Instruct`、`PaddlePaddle/PaddleOCR-VL-1.5`、`deepseek-ai/DeepSeek-OCR` | `Qwen/Qwen3-VL-32B-Instruct`、`Qwen/Qwen3-VL-8B-Instruct` |
 | 向量 | `BAAI/bge-m3` | `Qwen/Qwen3-Embedding-8B` / `-4B` / `-0.6B` |
 | 重排（V3） | `BAAI/bge-reranker-v2-m3` | `Qwen/Qwen3-Reranker-8B` |
 
@@ -197,10 +197,15 @@ V1 只能拿到 PDF 的文本层。三类页面在这里会丢失信息，且丢
 
 三条通道都可以用同一个硅基流动 Key，不必再申请其他平台：
 
-| 用途   | `OCR_MODEL` / `VISION_MODEL` | 说明                        |
-| ---- | ---------------------------- | ------------------------- |
-| OCR  | `PaddlePaddle/PaddleOCR-VL-1.5` | 免费，专做文字转录，表格输出 Markdown |
-| 图注   | `Qwen/Qwen2.5-VL-72B-Instruct` | 图表理解更强，能读箭头关系             |
+| 用途       | `OCR_MODEL` / `VISION_MODEL`    | 实测表现                                  |
+| -------- | ------------------------------- | ------------------------------------- |
+| OCR      | `Qwen/Qwen3-VL-32B-Instruct`    | 按提示词输出 Markdown 表格，行列对应关系可靠           |
+| OCR（备选）  | `PaddlePaddle/PaddleOCR-VL-1.5` | 免费，但实测把表格输出成逐行纯文本，单页约 78 秒            |
+| 图注       | `Qwen/Qwen3-VL-32B-Instruct`    | 图表理解强，能读出箭头关系                         |
+
+PaddleOCR-VL 是专用 OCR 模型，转录纯文字扫描件没问题；但它不遵循「输出 Markdown 表格」的指令，遇到表格页会丢掉行列对应关系。因此默认用 Qwen3-VL，PaddleOCR-VL 留在「页面无表格且要压成本」的场合。
+
+视觉调用是整条链路里唯一按页计费、且单页可能耗时十几秒的环节，所以要限速：`OCR_MIN_INTERVAL` 控制两次调用之间的最小间隔（默认 1.5 秒），遇 429 会按指数退避重试 `HTTP_RETRIES` 次。
 
 `OCR_BASE_URL` / `OCR_API_KEY` 留空时会自动复用 `LLM_BASE_URL` / `LLM_API_KEY`。若要换成阿里百炼等其他平台，只改这两个变量即可，代码无需改动。
 
@@ -498,6 +503,8 @@ rag-agent/
 | `OCR_RENDER_DPI`         | `150`                           | 渲染分辨率，正文 150 足够，小字用 200     |
 | `OCR_MAX_PAGES`          | `20`                            | 单次增强允许调用模型的最大页数             |
 | `OCR_TIMEOUT`            | `120`                           | 单页视觉请求超时（秒）                 |
+| `OCR_MIN_INTERVAL`       | `1.5`                           | 两次视觉调用之间的最小间隔（秒），限速用     |
+| `HTTP_RETRIES`           | `3`                             | 遇 429 / 5xx 的重试次数，指数退避        |
 | `ENHANCE_MAX_SECONDS`    | `120`                           | 整次增强的时间上限                   |
 | `EMBED_BASE_URL` / `EMBED_API_KEY` | 空                     | 留空复用 LLM 的端点与密钥             |
 | `EMBED_MODEL`            | `BAAI/bge-m3`                   | 向量模型，1024 维，硅基流动免费          |
@@ -536,7 +543,7 @@ pytest -q
 
 - 无检索能力，问答依赖人工选页，受 `MAX_CONTEXT_CHARS` 限制
 - 结构指标是代理指标，不是检索精度；真正的 `hit@5` / `MRR` 在 V6 引入
-- OCR 与图注按页计费，默认关闭；单页 1–5 秒，长文档需靠 `OCR_MAX_PAGES` 控成本
+- OCR 与图注按页计费，默认关闭；单页 5–20 秒（模型差异很大），长文档需靠 `OCR_MAX_PAGES` 与 `OCR_MIN_INTERVAL` 控成本与频率
 - 整页扫描件若无文字层且 OCR 也读不出内容，只能得到图注，得不到可引用的原文
 - 多栏排版可能出现阅读顺序错乱，`detect_vertical=True` 只能部分缓解
 - 表格块在页内按「正文 → 表格 → 图注」的顺序排列，不还原原始纵坐标位置

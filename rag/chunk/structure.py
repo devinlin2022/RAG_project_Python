@@ -1,12 +1,5 @@
-"""Heading hierarchy for Chinese contracts, policies and regulations.
-
-Contracts are not plain prose. Their meaning lives in the numbering:
-章 / 节 / 条 / 一、/（一）/ 1.1 /（1）. Splitting by character count cuts a clause in
-half and the fragment becomes unusable as evidence. Parsing the numbering first
-lets a chunk keep one complete clause and carry its breadcrumb.
-
-The parser is deliberately regex-only: no model, no network, ~1ms per page.
-"""
+"""Heading hierarchy for Chinese contracts and regulations. Regex only: no model,
+no network, about 1 ms per page."""
 
 import re
 from dataclasses import dataclass
@@ -15,12 +8,8 @@ from rag.chunk.types import Section
 
 _CN_NUM = "一二三四五六七八九十百千零〇两"
 
-# (level, pattern). Lower level = higher in the hierarchy.
-# Two numbering conventions coexist in Chinese documents:
-#   regulation style: 第X条 > 一、 > （一） > 1.
-#   contract style:   第X条 > 2.1 > （一） > （1）
-# Decimal numbering is therefore ranked above （一）, and its depth follows the
-# dot count so 2.1.3 nests under 2.1 instead of replacing it.
+# Two numbering conventions coexist: 第X条 > 一、 > （一） > 1. and
+# 第X条 > 2.1 > （一） > （1）. Decimal ranks above （一）, depth from dot count.
 _PATTERNS: list[tuple[int, re.Pattern]] = [
     (1, re.compile(r"^(#{1})\s+(?=\S)")),
     (1, re.compile(rf"^(第\s*[{_CN_NUM}\d]+\s*(?:章|篇|部分))")),
@@ -142,8 +131,7 @@ def build_sections(pairs: list[tuple[int, object]]) -> list[Section]:
             continue
 
         if kind != "text":
-            # OCR output has no reliable line structure for 章/条 detection; keep it
-            # whole inside the current section so it is not chopped mid-figure.
+            # OCR text has no line structure; keep it whole in the current section.
             pages.append(page_no)
             buffer.append(text)
             continue

@@ -1,13 +1,5 @@
-"""Profile a document and recommend a chunking strategy in milliseconds.
-
-No model call, no embedding: the recommender only reads the text that has already
-been extracted. That is what keeps the recommendation cheap enough to run on every
-upload, which a model-based router could not do.
-
-The rules encode one opinion, stated openly: if a document has real numbering
-(章/条 system), structure-first chunking wins, because a clause split in half is
-worthless as evidence no matter how semantically coherent the halves look.
-"""
+"""Document census and strategy recommendation. No model, no embedding: only the
+text already extracted, so it stays in the millisecond range."""
 
 from dataclasses import asdict, dataclass, field
 

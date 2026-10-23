@@ -1,16 +1,5 @@
-"""Decide whether a page is a diagram rather than text.
-
-The signals are computed once during ingest (see `loader.page_stats`) and stored on
-each page, so this module holds only the decision and the human-readable reason.
-
-Two signals:
-
-- image_cover: embedded raster area / page area. Filters out header logos (<5%).
-- vector_ops: rects + lines + curves. A vector diagram is dozens of small shapes
-  with little text. The bar is 40 ops, not 60: a vendor-mapping diagram with 28
-  boxes and 28 arrows is only ~90 ops, and a dense table has already been excluded
-  by the table flag before this runs.
-"""
+"""Diagram detection. Signals come from `loader.page_stats`; this module only
+decides and explains."""
 
 import logging
 from dataclasses import dataclass

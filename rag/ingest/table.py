@@ -1,15 +1,8 @@
-"""Turn a page's tables into Markdown so a table stays readable inside a chunk.
+"""Turn a page's tables into Markdown.
 
-Row-level text from pdfminer destroys a table: cells collapse into one line and the
-header is gone. Three cases, in order of reliability:
-
-1. Ruled table   -> pdfplumber keeps the cell grid.
-2. Pipe text     -> the PDF stores "A | B | C" as plain text; parse the lines.
-3. Space aligned -> columns separated only by runs of spaces; parse the runs.
-
-Case 2 and 3 are common in contracts exported from Word, and pdfplumber's
-text-strategy guess mangles them (it splits on the pipe characters themselves),
-so they are parsed from the already-extracted text instead.
+Three cases: ruled grid (pdfplumber), pipe text, space-aligned text. The latter
+two are parsed from the extracted text, because pdfplumber's text strategy splits
+on the pipe characters themselves and mangles them.
 """
 
 import logging
@@ -50,8 +43,7 @@ def _render(rows: list[list[str]], caption: str) -> str | None:
     width = max(len(r) for r in rows)
     if width < 2:
         return None
-    # A slide's coloured content blocks look like a 2x2 table to the line
-    # detector. Real table cells are terse; a layout cell holds a paragraph.
+    # Layout blocks are 2x2 grids too; real cells are short, layout cells hold prose.
     if len(rows) < 3 and width < 3:
         return None
     cell_lengths = sorted(len(c) for row in rows for c in row if c)
@@ -61,8 +53,7 @@ def _render(rows: list[list[str]], caption: str) -> str | None:
             return None
     rows = [r + [""] * (width - len(r)) for r in rows]
 
-    # A header row shorter than the table means the trailing column is empty
-    # there; that is still the header, not a data row.
+    # A header shorter than the table means a trailing empty column, not a row.
     if _looks_like_header(rows[0]) or len(rows[0]) < width:
         header, body = rows[0] + [""] * (width - len(rows[0])), rows[1:]
     else:

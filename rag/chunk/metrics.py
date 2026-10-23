@@ -1,16 +1,4 @@
-"""Zero-cost structural metrics.
-
-These are not retrieval precision. They measure whether a chunker respected the
-document's own structure, which can be computed in milliseconds without a gold
-set and which is exactly what matters for contracts:
-
-- boundary: does a chunk end where a sentence ends?
-- clause:   is every 第X条 contained in one chunk?
-- size:     are chunk lengths inside the target window?
-- section:  does a chunk know which heading it belongs to?
-
-Real hit@5 / MRR need labelled questions and arrive in V6.
-"""
+"""Structural proxy metrics. Not retrieval precision; hit@5 / MRR arrive in V6."""
 
 import re
 from collections import Counter

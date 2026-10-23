@@ -1,8 +1,4 @@
-"""Recursive character splitter. Kept as the control arm, not the default.
-
-Splits on the coarsest separator present, recurses into anything still oversized,
-then merges the pieces back up to the size budget with optional overlap.
-"""
+"""Recursive character splitter. Control arm, not the default."""
 
 from rag.chunk.types import Chunk
 

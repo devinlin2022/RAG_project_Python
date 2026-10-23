@@ -40,11 +40,13 @@ class Settings(BaseSettings):
     ocr_enabled: bool = False
     ocr_base_url: str = ""
     ocr_api_key: str = ""
-    ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"
-    vision_model: str = "Qwen/Qwen2.5-VL-72B-Instruct"
+    ocr_model: str = "Qwen/Qwen3-VL-32B-Instruct"
+    vision_model: str = "Qwen/Qwen3-VL-32B-Instruct"
     ocr_render_dpi: int = 150
     ocr_max_pages: int = 20
     ocr_timeout: int = 120
+    ocr_min_interval: float = 1.5
+    http_retries: int = 3
     enhance_max_seconds: int = 120
 
     # Embeddings (semantic chunking). bge-m3 is free on SiliconFlow.

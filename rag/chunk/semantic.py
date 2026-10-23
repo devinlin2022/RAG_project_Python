@@ -1,9 +1,7 @@
-"""Semantic chunking: break where meaning changes, not where a counter hits zero.
+"""Semantic chunking: break where meaning changes.
 
-Sentences are embedded, the cosine distance between neighbours is measured, and
-breakpoints are taken above a percentile. A percentile is used instead of a fixed
-threshold because the distance scale depends on the embedding model, and a fixed
-cutoff either never fires or fires everywhere.
+Breakpoints come from a percentile of neighbour distances, not a fixed threshold:
+the distance scale depends on the embedding model.
 """
 
 import logging

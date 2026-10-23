@@ -1,20 +1,14 @@
-"""OCR and figure understanding through an OpenAI-compatible vision model.
-
-Two different jobs, deliberately kept apart:
-
-- OCR: recover characters that have no text layer (scanned pages).
-- Figure: recover the *meaning* of a diagram. OCR only yields labels; a flowchart
-  needs the arrows, so the prompt asks for edges explicitly.
-
-Both reuse the chat API key by default, so a single .env is enough.
-"""
+"""Vision calls for scanned pages (OCR) and diagrams (caption)."""
 
 import logging
 import time
 from dataclasses import dataclass
 
+import requests
+
 from rag.config import settings
 from rag.ingest.render import image_block
+from rag.net import post_json
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +21,7 @@ OCR_PROMPT = (
     "5. 无法辨认的字符用 □ 代替，不要猜测。"
 )
 
+# OCR only yields labels; a diagram needs the arrows, so ask for edges explicitly.
 FIGURE_PROMPT = (
     "你是文档图表分析助手。请描述这张图，要求：\n"
     "1. 先说图表类型（流程图 / 组织架构 / 时序图 / 截图 / 照片 / 图表）；\n"
@@ -38,7 +33,7 @@ FIGURE_PROMPT = (
 
 
 class OcrError(Exception):
-    """OCR or vision call failed."""
+    """OCR or caption call failed."""
 
 
 @dataclass
@@ -55,9 +50,6 @@ class OcrResult:
 
 
 def vision_chat(png: bytes, prompt: str, model: str) -> OcrResult:
-    """One image + one prompt -> text. Shared by OCR and figure routes."""
-    import requests
-
     api_key = settings.ocr_api_key_resolved
     if not api_key:
         raise OcrError("未配置 API Key，无法调用视觉模型（见 .env 的 LLM_API_KEY）")
@@ -76,14 +68,13 @@ def vision_chat(png: bytes, prompt: str, model: str) -> OcrResult:
     }
     started = time.perf_counter()
     try:
-        response = requests.post(
+        response = post_json(
             settings.ocr_base_url_resolved + "/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=settings.ocr_timeout,
+            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            payload,
+            settings.ocr_timeout,
+            min_interval=settings.ocr_min_interval,
+            retries=settings.http_retries,
         )
     except requests.Timeout as exc:
         raise OcrError(f"视觉模型超时（{settings.ocr_timeout}s），可调大 OCR_TIMEOUT") from exc
@@ -94,6 +85,10 @@ def vision_chat(png: bytes, prompt: str, model: str) -> OcrResult:
 
     if response.status_code == 401:
         raise OcrError("API Key 无效（401），请检查 .env 中的 LLM_API_KEY")
+    if response.status_code == 402:
+        raise OcrError("账户余额不足（402），请先在控制台充值")
+    if response.status_code == 429:
+        raise OcrError("触发限流（429），请调大 OCR_MIN_INTERVAL 或减少 OCR_MAX_PAGES")
     if response.status_code == 404:
         raise OcrError(f"视觉模型不存在（404）：{model}，请核对 OCR_MODEL 或 VISION_MODEL")
     if response.status_code >= 400:
@@ -116,17 +111,15 @@ def vision_chat(png: bytes, prompt: str, model: str) -> OcrResult:
 
 
 def ocr_page(png: bytes) -> OcrResult:
-    """Transcribe a scanned page."""
     return vision_chat(png, OCR_PROMPT, settings.ocr_model)
 
 
 def describe_figure(png: bytes) -> OcrResult:
-    """Describe a diagram, including arrow relations."""
     return vision_chat(png, FIGURE_PROMPT, settings.vision_model)
 
 
 def ocr_local(png: bytes) -> OcrResult:
-    """Offline fallback via RapidOCR. Optional: pip install rapidocr-onnxruntime."""
+    """Offline fallback. Optional: pip install rapidocr-onnxruntime."""
     try:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError as exc:
@@ -144,5 +137,8 @@ def ocr_local(png: bytes) -> OcrResult:
     image = np.array(Image.open(io.BytesIO(png)).convert("RGB"))
     result, _ = RapidOCR()(image)
     elapsed = int((time.perf_counter() - started) * 1000)
-    lines = [item[1] for item in (result or [])]
-    return OcrResult(text="\n".join(lines).strip(), engine="rapidocr", ms=elapsed)
+    return OcrResult(
+        text="\n".join(item[1] for item in (result or [])).strip(),
+        engine="rapidocr",
+        ms=elapsed,
+    )

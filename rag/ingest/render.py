@@ -1,4 +1,4 @@
-"""Render a PDF page to PNG bytes for OCR / vision calls."""
+"""Render a PDF page to PNG for OCR and vision calls."""
 
 import io
 import logging

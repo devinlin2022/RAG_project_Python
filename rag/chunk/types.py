@@ -1,4 +1,4 @@
-"""Chunk and section data structures shared by every splitter."""
+"""Chunk and section types shared by every splitter."""
 
 from dataclasses import dataclass, field
 
@@ -35,7 +35,7 @@ class Chunk:
 
 @dataclass
 class Section:
-    """A heading-delimited unit. May span pages; that is the point."""
+    """A heading-delimited unit. May span pages."""
 
     label: str
     path: str

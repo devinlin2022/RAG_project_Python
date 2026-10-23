@@ -1,4 +1,4 @@
-"""Table splitting wrapper so the chunk package does not depend on pdfplumber."""
+"""Wrapper so the chunk package does not import pdfplumber."""
 
 import logging
 
