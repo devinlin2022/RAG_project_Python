@@ -12,7 +12,6 @@ from rag.config import VERSION, settings
 from rag.generate.answer import PageAnswerError, answer_by_pages
 from rag.generate.llm import LLMError
 from rag.ingest.enhance import all_blocks, blocks_of, enhance, plan_pages
-from rag.ingest.figure import detect_figures
 from rag.ingest.loader import load_document
 from rag.ingest.loader import page_text as page_text_view
 from rag.utils import format_pages, parse_pages
@@ -107,13 +106,31 @@ def _metrics_markdown(result: dict) -> str:
             if info.get("semantic_sections")
             else "\n- 本次无超长条款，混合策略等同于结构化切分"
         )
+    if metrics.get("boundary_applicable", True):
+        boundary_line = f"- 断句越界率：{metrics.get('boundary_violation', 0):.0%}（块末不是句末的比例，越低越好）\n"
+    else:
+        boundary_line = (
+            "- 断句越界率：**不适用**（本文件以短句/项目符号为主，"
+            f"句末标点仅占 {metrics.get('prose_ratio', 0):.0%}，该项已从结构得分中剔除）\n"
+        )
     return (
         f"策略 **{LABELS.get(result['strategy'], result['strategy'])}**　｜　"
         f"{metrics.get('chunks', 0)} 块　｜　平均 {metrics.get('avg_chars', 0)} 字　｜　"
         f"每千字 {metrics.get('chunks_per_1k', 0)} 块　｜　耗时 {result['ms']} ms\n\n"
-        f"- 条款完整率：{metrics.get('clause_integrity', 0):.0%}（第X条未被切断的比例）\n"
-        f"- 断句越界率：{metrics.get('boundary_violation', 0):.0%}（块末不是句末的比例，越低越好）\n"
+        + (
+            f"- 条款完整率：{metrics.get('clause_integrity', 0):.0%}（第X条未被切断的比例）\n"
+            if metrics.get("clause_applicable", True)
+            else "- 条款完整率：**不适用**（本文件无「第X条」编号，该项已从得分中剔除）\n"
+        )
+        + f"{boundary_line}"
         f"- 长度命中率：{metrics.get('size_conformance', 0):.0%}\n"
+        f"- 类型保留率："
+        + (
+            "—（本文件无表格/图形块）"
+            if metrics.get("typed_preservation") is None
+            else f"{metrics['typed_preservation']:.0%}（表格/图形块保留为独立块的比例）"
+        )
+        + "\n"
         f"- 章节覆盖率：{metrics.get('section_coverage', 0):.0%}\n"
         f"- 结构得分：**{metrics.get('struct_score', 0):.3f}**"
         f"{note}\n\n"
@@ -122,21 +139,30 @@ def _metrics_markdown(result: dict) -> str:
     )
 
 
+def _pct(value, applicable: bool) -> str:
+    if not applicable:
+        return "—"
+    return f"{value:.0%}"
+
+
 def _compare_rows(rows: list[dict]) -> list[list]:
-    return [
-        [
-            "★ " + row["label"] if row["recommended"] else row["label"],
-            row["chunks"],
-            row["avg_chars"],
-            f"{row['clause_integrity']:.0%}",
-            f"{row['boundary_violation']:.0%}",
-            f"{row['section_coverage']:.0%}",
-            f"{row['struct_score']:.3f}",
-            row["ms"],
-            row["error"][:40],
-        ]
-        for row in rows
-    ]
+    out = []
+    for row in rows:
+        typed = row.get("typed_preservation")
+        out.append(
+            [
+                ("★ " + row["label"]) if row["recommended"] else row["label"],
+                row["chunks"],
+                row["avg_chars"],
+                _pct(row["clause_integrity"], row.get("clause_applicable", True)),
+                _pct(row["boundary_violation"], row.get("boundary_applicable", True)),
+                "—" if typed is None else f"{typed:.0%}",
+                f"{row['section_coverage']:.0%}",
+                f"{row['struct_score']:.3f}",
+                row["ms"],
+            ]
+        )
+    return out
 
 
 def _chunk_rows(chunks: list) -> list[list]:
@@ -236,7 +262,7 @@ def build_ui(store: DocStore) -> gr.Blocks:
             profile_box = gr.Markdown()
             metrics_box = gr.Markdown()
             compare_table = gr.Dataframe(
-                headers=["策略", "块数", "平均字数", "条款完整", "越界率", "章节覆盖", "结构得分", "耗时ms", "备注"],
+                headers=["策略", "块数", "平均字数", "条款完整", "越界率", "类型保留", "章节覆盖", "结构得分", "耗时ms"],
                 interactive=False,
                 wrap=True,
                 label="四种策略结构指标对比（★ 为自动推荐项）",
@@ -340,8 +366,7 @@ def build_ui(store: DocStore) -> gr.Blocks:
             doc = store.get(doc_id)
             if doc is None:
                 return "请先在「文档」页解析一份 PDF。", _update(value=[]), [], _update(choices=[], value=None)
-            hints = detect_figures(doc["path"], set(doc["table_like_pages"]))
-            plans = plan_pages(doc, hints, set())
+            plans = plan_pages(doc)
             rows = [
                 [p.page, " + ".join(p.routes), p.reason[:60], "计划中", p.chars, "", "", "—", ""]
                 for p in plans
@@ -634,13 +659,17 @@ def _compare_note(rows: list[dict]) -> str:
         f"结构得分 {winner['struct_score']:.3f}　｜　{winner['chunks']} 块　｜　"
         f"平均 {winner['avg_chars']} 字　｜　条款完整 {winner['clause_integrity']:.0%}",
         "",
-        "| 策略 | 块数 | 平均字数 | 条款完整 | 越界率 | 章节覆盖 | 结构得分 | 耗时ms |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| 策略 | 块数 | 平均字数 | 条款完整 | 越界率 | 类型保留 | 章节覆盖 | 结构得分 | 耗时ms |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
+        typed = row.get("typed_preservation")
         lines.append(
             f"| {'★ ' if row['recommended'] else ''}{row['label']} | {row['chunks']} | "
-            f"{row['avg_chars']} | {row['clause_integrity']:.0%} | {row['boundary_violation']:.0%} | "
+            f"{row['avg_chars']} | "
+            f"{_pct(row['clause_integrity'], row.get('clause_applicable', True))} | "
+            f"{_pct(row['boundary_violation'], row.get('boundary_applicable', True))} | "
+            f"{'—' if typed is None else f'{typed:.0%}'} | "
             f"{row['section_coverage']:.0%} | {row['struct_score']:.3f} | {row['ms']} |"
         )
     lines.append("")

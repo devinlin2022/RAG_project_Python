@@ -84,6 +84,8 @@ def profile_document(
     reasons: list[str] = []
     legal_like = stats.article_count >= 5 or (stats.ratio >= 0.015 and stats.max_depth >= 2)
 
+    block_heavy = table_ratio >= 0.1 or figure_ratio >= 0.1
+
     if legal_like:
         strategy = "hybrid"
         reasons.append(
@@ -96,6 +98,15 @@ def profile_document(
         strategy = "structured"
         reasons.append(f"有 {stats.heading_lines} 行标题但条款编号稀疏，按标题切分即可")
         reasons.append("不做语义切分，省掉一次 Embedding 调用")
+        confidence = "中"
+    elif block_heavy:
+        strategy = "structured"
+        reasons.append(
+            f"表格页占 {table_ratio:.0%}、图形页占 {figure_ratio:.0%}，内容以块为单位"
+        )
+        reasons.append(
+            "语义/递归切分会把表格行压成普通文字，只有结构化切分保留表格块与表头"
+        )
         confidence = "中"
     elif chars >= 3000 and len(sentences) >= 20:
         strategy = "semantic"

@@ -70,26 +70,84 @@ def load_pdf(path: str | Path) -> list[dict]:
     return pages
 
 
-def count_tables(path: str | Path) -> dict[int, int]:
-    """Count tables per page via pdfplumber; failures are per page."""
+def _table_shape_ok(table, page_area: float) -> bool:
+    """Reject layout boxes that pdfplumber reports as tables.
+
+    A slide's coloured content blocks look exactly like a 2x2 table to the line
+    detector. Three cheap tests separate them from real tables:
+
+    - a table needs at least 3 rows or 3 columns (a 2x2 box is a layout)
+    - a single column is never a table
+    - a table covering ~the whole page is the page background, not a grid
+    """
+    try:
+        rows = len(table.rows)
+        cols = max((len(row.cells) for row in table.rows), default=0)
+    except Exception:
+        return False
+    if rows < 2 or cols < 2:
+        return False
+    if rows < 3 and cols < 3:
+        return False
+    try:
+        x0, top, x1, bottom = table.bbox
+        area = max((x1 - x0) * (bottom - top), 0.0)
+        if page_area and area / page_area >= 0.85:
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def page_stats(path: str | Path) -> dict[int, dict]:
+    """One pdfplumber pass: table count, image coverage, vector-op count per page.
+
+    Kept in a single pass because pdfplumber parsing dominates ingest time on long
+    documents, and every downstream decision needs the same three numbers.
+    """
+    stats: dict[int, dict] = {}
     try:
         import pdfplumber
     except ImportError:
-        log.warning("pdfplumber not installed, table detection skipped")
-        return {}
+        log.warning("pdfplumber not installed, table/figure detection skipped")
+        return stats
 
-    counts: dict[int, int] = {}
     try:
         with pdfplumber.open(str(path)) as pdf:
             for index, page in enumerate(pdf.pages, start=1):
                 try:
-                    counts[index] = len(page.find_tables())
+                    area = max(float(page.width) * float(page.height), 1.0)
+                    tables = sum(
+                        1 for table in page.find_tables() if _table_shape_ok(table, area)
+                    )
+                    cover = min(
+                        sum(
+                            float(image["width"]) * float(image["height"])
+                            for image in (page.images or [])
+                        )
+                        / area,
+                        1.0,
+                    )
+                    ops = (
+                        len(page.rects or [])
+                        + len(page.lines or [])
+                        + len(page.curves or [])
+                    )
+                    stats[index] = {
+                        "tables": tables,
+                        "image_cover": round(cover, 3),
+                        "vector_ops": ops,
+                    }
                 except Exception:
-                    counts[index] = 0
+                    stats[index] = {"tables": 0, "image_cover": 0.0, "vector_ops": 0}
     except Exception as exc:
-        log.warning("table detection failed: %s", exc)
-        return {}
-    return counts
+        log.warning("page stats failed: %s", exc)
+    return stats
+
+
+def count_tables(path: str | Path) -> dict[int, int]:
+    """Count tables per page; failures are per page."""
+    return {page: item["tables"] for page, item in page_stats(path).items()}
 
 
 def column_ratio(text: str) -> float:
@@ -101,15 +159,51 @@ def column_ratio(text: str) -> float:
     return round(columnar / len(lines), 3)
 
 
-def annotate(pages: list[dict], tables: dict[int, int]) -> list[dict]:
-    """Flag pages as scan_like / table_like."""
+def _signal(stats: dict, page_no: int) -> tuple[int, float, int]:
+    """Accept either {page: count} or {page: {tables, image_cover, vector_ops}}."""
+    value = stats.get(page_no, 0)
+    if isinstance(value, dict):
+        return (
+            int(value.get("tables", 0)),
+            float(value.get("image_cover", 0.0)),
+            int(value.get("vector_ops", 0)),
+        )
+    return int(value or 0), 0.0, 0
+
+
+def annotate(pages: list[dict], stats: dict) -> list[dict]:
+    """Flag pages as scan_like / table_like / figure_like.
+
+    scan_like no longer means "little text". A slide with 170 chars of bullets is
+    not a scan, and a slide whose table is an embedded image is one even though it
+    has 170 chars of title. The signal is text *versus picture area*.
+    """
     for page in pages:
-        page["tables"] = tables.get(page["page"], 0)
+        tables, cover, ops = _signal(stats, page["page"])
+        page["tables"] = tables
+        page["image_cover"] = cover
+        page["vector_ops"] = ops
         page["column_ratio"] = column_ratio(page["text"])
-        page["scan_like"] = page["chars"] < settings.scan_page_char_threshold
+
+        if page["chars"] < 30:
+            page["scan_like"] = True
+        elif (
+            page["chars"] < settings.scan_page_char_threshold * 2 and cover >= 0.15
+        ):
+            page["scan_like"] = True
+        else:
+            page["scan_like"] = False
+
         page["table_like"] = (
-            page["tables"] > 0
-            or page["column_ratio"] >= settings.table_column_ratio
+            tables > 0 or page["column_ratio"] >= settings.table_column_ratio
+        )
+        page["figure_like"] = (
+            not page["scan_like"]
+            and not page["table_like"]
+            and (
+                cover >= 0.05
+                or (ops >= 40 and page["chars"] < settings.figure_text_max)
+            )
         )
     return pages
 
@@ -125,7 +219,7 @@ def load_document(
         raise ValueError(f"文件不存在：{path}")
 
     doc_id = doc_id or sha256_file(path)[:16]
-    pages = annotate(load_pdf(path), count_tables(path))
+    pages = annotate(load_pdf(path), page_stats(path))
 
     return {
         "id": doc_id,
@@ -136,6 +230,7 @@ def load_document(
         "chars": sum(p["chars"] for p in pages),
         "scan_like_pages": [p["page"] for p in pages if p["scan_like"]],
         "table_like_pages": [p["page"] for p in pages if p["table_like"]],
+        "figure_like_pages": [p["page"] for p in pages if p["figure_like"]],
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
 

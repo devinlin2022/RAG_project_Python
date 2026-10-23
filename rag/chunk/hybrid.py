@@ -23,6 +23,7 @@ from rag.chunk.recursive import split_recursive
 from rag.chunk.semantic import semantic_split
 from rag.chunk.structure import build_sections
 from rag.chunk.table import split_markdown_table_guard
+from rag.embed.client import embed_ready
 from rag.chunk.types import Chunk, Section
 
 
@@ -51,6 +52,14 @@ def chunk_structured(
     sections = build_sections(blocks)
     if not sections:
         return [], {"sections": 0, "oversized": 0, "semantic_inside": semantic_inside}
+
+    # Without an embedding endpoint the semantic pass would fail once per
+    # oversized section; fall back to character splitting up front instead.
+    if semantic_inside and not embed_ready():
+        semantic_inside = False
+        semantic_skipped = True
+    else:
+        semantic_skipped = False
 
     chunks: list[Chunk] = []
     oversized = 0
@@ -193,6 +202,7 @@ def chunk_structured(
         "oversized": oversized,
         "semantic_inside": semantic_inside,
         "semantic_sections": semantic_used,
+        "semantic_skipped_no_embed": semantic_skipped,
     }
     return chunks, stats
 

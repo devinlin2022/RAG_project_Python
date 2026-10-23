@@ -36,7 +36,11 @@ def boundary_violation(chunks: list[Chunk]) -> float:
 
 
 def clause_integrity(source_text: str, chunks: list[Chunk]) -> float:
-    """Share of 第X条 labels that survive whole inside a single chunk."""
+    """Share of 第X条 labels that survive whole inside a single chunk.
+
+    Returns 1.0 for a document with no clause labels, which is why callers must
+    check `clause_applicable`: 100% of zero clauses is not evidence of quality.
+    """
     expected = Counter(_CLAUSE.findall(source_text))
     if not expected:
         return 1.0
@@ -83,7 +87,39 @@ def overlap_waste(chunks: list[Chunk]) -> float:
     return round(1 - unique / total, 4)
 
 
-def composite(chunks: list[Chunk], source_text: str, min_chars: int, max_chars: int) -> dict:
+def prose_ratio(text: str) -> float:
+    """Share of lines ending on sentence punctuation.
+
+    A slide deck made of bullet fragments scores near zero, and then "does a chunk
+    end on a sentence?" is measuring the document, not the chunker. The metric is
+    marked inapplicable below and dropped from the score.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return 0.0
+    ended = sum(1 for line in lines if line[-1] in "。！？；.!?;")
+    return round(ended / len(lines), 4)
+
+
+def typed_preservation(chunks: list[Chunk], expected_typed: int) -> float | None:
+    """Share of table/figure/ocr blocks that survived as their own chunk type.
+
+    Only structure-aware strategies can keep a table a table. Semantic and
+    recursive chunking flatten it into prose, which no other metric here notices.
+    """
+    if expected_typed <= 0:
+        return None
+    kept = sum(1 for chunk in chunks if chunk.kind != "text")
+    return round(min(kept / expected_typed, 1.0), 4)
+
+
+def composite(
+    chunks: list[Chunk],
+    source_text: str,
+    min_chars: int,
+    max_chars: int,
+    expected_typed: int = 0,
+) -> dict:
     """Bundle the proxies into one comparable score, weighted for clause work."""
     metrics = {
         "chunks": len(chunks),
@@ -95,11 +131,25 @@ def composite(chunks: list[Chunk], source_text: str, min_chars: int, max_chars: 
         "section_coverage": section_coverage(chunks),
         "overlap_waste": overlap_waste(chunks),
     }
-    score = (
-        metrics["clause_integrity"] * 0.45
-        + (1 - metrics["boundary_violation"]) * 0.25
-        + metrics["size_conformance"] * 0.20
-        + metrics["section_coverage"] * 0.10
-    )
+    metrics["prose_ratio"] = prose_ratio(source_text)
+    metrics["boundary_applicable"] = metrics["prose_ratio"] >= 0.2
+    metrics["clause_applicable"] = bool(_CLAUSE.search(source_text))
+    metrics["typed_preservation"] = typed_preservation(chunks, expected_typed)
+    metrics["typed_expected"] = expected_typed
+
+    # Only applicable terms enter the score, and their weights are renormalised.
+    # A document without clauses, or without sentences, must not be graded on them.
+    terms: list[tuple[float, float]] = []
+    if metrics["clause_applicable"]:
+        terms.append((metrics["clause_integrity"], 0.45))
+    if metrics["boundary_applicable"]:
+        terms.append((1 - metrics["boundary_violation"], 0.25))
+    if metrics["typed_preservation"] is not None:
+        terms.append((metrics["typed_preservation"], 0.30))
+    terms.append((metrics["size_conformance"], 0.20))
+    terms.append((metrics["section_coverage"], 0.10))
+
+    weight = sum(w for _, w in terms)
+    score = sum(value * w for value, w in terms) / weight if weight else 0.0
     metrics["struct_score"] = round(score - metrics["overlap_waste"] * 0.05, 4)
     return metrics

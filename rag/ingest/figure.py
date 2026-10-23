@@ -1,12 +1,15 @@
-"""Detect pages whose content is a picture rather than text.
+"""Decide whether a page is a diagram rather than text.
 
-Two signals, both cheap and offline:
+The signals are computed once during ingest (see `loader.page_stats`) and stored on
+each page, so this module holds only the decision and the human-readable reason.
+
+Two signals:
 
 - image_cover: embedded raster area / page area. Filters out header logos (<5%).
-- vector_ops: count of rects/lines/curves. A vector flowchart is drawn as hundreds
-  of tiny shapes with almost no text, so ops >> text is the giveaway.
-
-A table is also drawn with rects, so pages already known to hold tables are skipped.
+- vector_ops: rects + lines + curves. A vector diagram is dozens of small shapes
+  with little text. The bar is 40 ops, not 60: a vendor-mapping diagram with 28
+  boxes and 28 arrows is only ~90 ops, and a dense table has already been excluded
+  by the table flag before this runs.
 """
 
 import logging
@@ -15,8 +18,7 @@ from dataclasses import dataclass
 log = logging.getLogger(__name__)
 
 IMAGE_COVER_MIN = 0.05
-VECTOR_OPS_MIN = 60
-VECTOR_TEXT_MAX = 1500
+FIGURE_OPS_MIN = 40
 
 
 @dataclass
@@ -29,44 +31,35 @@ class FigureHint:
     reason: str
 
 
-def detect_figures(
-    path: str,
-    skip_pages: set[int] | None = None,
-) -> dict[int, FigureHint]:
-    """Per-page figure hints. Returns {} when pdfplumber is unavailable."""
-    skip_pages = skip_pages or set()
+def figure_reason(page: dict) -> str:
+    """Explain why a page is, or is not, treated as a diagram."""
+    cover = float(page.get("image_cover", 0.0))
+    ops = int(page.get("vector_ops", 0))
+    chars = int(page.get("chars", 0))
+
+    if page.get("scan_like"):
+        return "扫描页，走 OCR 通道"
+    if page.get("table_like"):
+        return "表格页，走表格通道"
+    if cover >= IMAGE_COVER_MIN:
+        return f"嵌入图片覆盖 {cover:.0%}"
+    if ops >= FIGURE_OPS_MIN:
+        if chars >= 1500:
+            return f"图元 {ops} 个但正文 {chars} 字，判为版式而非图形"
+        return f"矢量图元 {ops} 个、正文仅 {chars} 字"
+    return ""
+
+
+def hints_from_pages(pages: list[dict]) -> dict[int, FigureHint]:
+    """Build the per-page hint map from signals already stored on the pages."""
     hints: dict[int, FigureHint] = {}
-    try:
-        import pdfplumber
-    except ImportError:
-        return hints
-
-    try:
-        with pdfplumber.open(str(path)) as pdf:
-            for index, page in enumerate(pdf.pages, start=1):
-                try:
-                    area = max(float(page.width) * float(page.height), 1.0)
-                    images = page.images or []
-                    cover = min(
-                        sum(float(i["width"]) * float(i["height"]) for i in images) / area,
-                        1.0,
-                    )
-                    ops = len(page.rects or []) + len(page.lines or []) + len(page.curves or [])
-                    chars = len((page.extract_text() or "").strip())
-                except Exception:
-                    continue
-
-                if index in skip_pages:
-                    hints[index] = FigureHint(index, len(images), round(cover, 3), ops, False, "表格页，走表格通道")
-                    continue
-
-                if cover >= IMAGE_COVER_MIN:
-                    ok, reason = True, f"嵌入图片覆盖 {cover:.0%}"
-                elif ops >= VECTOR_OPS_MIN and chars < VECTOR_TEXT_MAX:
-                    ok, reason = True, f"矢量图元 {ops} 个、正文仅 {chars} 字"
-                else:
-                    ok, reason = False, ""
-                hints[index] = FigureHint(index, len(images), round(cover, 3), ops, ok, reason)
-    except Exception as exc:
-        log.warning("figure detection failed: %s", exc)
+    for page in pages:
+        hints[page["page"]] = FigureHint(
+            page=page["page"],
+            images=1 if page.get("image_cover", 0) >= IMAGE_COVER_MIN else 0,
+            image_cover=float(page.get("image_cover", 0.0)),
+            vector_ops=int(page.get("vector_ops", 0)),
+            figure_like=bool(page.get("figure_like")),
+            reason=figure_reason(page) if page.get("figure_like") else "",
+        )
     return hints

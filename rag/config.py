@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     scan_page_char_threshold: int = 200
     table_column_ratio: float = 0.4
     max_context_chars: int = 12000
+    # Below this many chars a page dense in vector shapes is treated as a diagram
+    figure_text_max: int = 1500
 
     # Public tunnel (optional)
     ngrok_enabled: bool = False

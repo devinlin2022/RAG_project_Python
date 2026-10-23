@@ -70,6 +70,7 @@ def chunk_document(
 
     elapsed = int((time.perf_counter() - started) * 1000)
     source = "\n".join(getattr(block, "text", "") for _, block in pairs)
+    typed = sum(1 for _, block in pairs if getattr(block, "type", "text") != "text")
 
     return {
         "chunks": chunks,
@@ -78,7 +79,7 @@ def chunk_document(
         "size": size,
         "overlap": overlap,
         "info": info,
-        "metrics": composite(chunks, source, min_chars, size),
+        "metrics": composite(chunks, source, min_chars, size, typed),
         "profile": profile.to_dict() if profile else None,
     }
 
@@ -95,6 +96,7 @@ def compare_strategies(
 ) -> list[dict]:
     """Run all four strategies and return comparable rows, recommendation first."""
     profile = profile_document(pairs, pages, table_pages, figure_pages)
+    typed = sum(1 for _, block in pairs if getattr(block, "type", "text") != "text")
     rows: list[dict] = []
 
     for strategy in STRATEGIES:
@@ -121,7 +123,7 @@ def compare_strategies(
 
         elapsed = int((time.perf_counter() - started) * 1000)
         source = "\n".join(getattr(block, "text", "") for _, block in pairs)
-        metrics = composite(chunks, source, min_chars, size) if chunks else {}
+        metrics = composite(chunks, source, min_chars, size, typed) if chunks else {}
         rows.append(
             {
                 "strategy": strategy,
@@ -133,6 +135,9 @@ def compare_strategies(
                 "boundary_violation": metrics.get("boundary_violation", 0.0),
                 "size_conformance": metrics.get("size_conformance", 0.0),
                 "section_coverage": metrics.get("section_coverage", 0.0),
+                "clause_applicable": metrics.get("clause_applicable", True),
+                "boundary_applicable": metrics.get("boundary_applicable", True),
+                "typed_preservation": metrics.get("typed_preservation"),
                 "struct_score": metrics.get("struct_score", 0.0),
                 "ms": elapsed,
                 "error": error,

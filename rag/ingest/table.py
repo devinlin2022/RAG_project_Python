@@ -50,6 +50,15 @@ def _render(rows: list[list[str]], caption: str) -> str | None:
     width = max(len(r) for r in rows)
     if width < 2:
         return None
+    # A slide's coloured content blocks look like a 2x2 table to the line
+    # detector. Real table cells are terse; a layout cell holds a paragraph.
+    if len(rows) < 3 and width < 3:
+        return None
+    cell_lengths = sorted(len(c) for row in rows for c in row if c)
+    if cell_lengths:
+        median = cell_lengths[len(cell_lengths) // 2]
+        if median > 80:
+            return None
     rows = [r + [""] * (width - len(r)) for r in rows]
 
     # A header row shorter than the table means the trailing column is empty

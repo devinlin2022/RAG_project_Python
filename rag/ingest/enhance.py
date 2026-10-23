@@ -12,11 +12,12 @@ just the final text: which route fired, why, how long it took, what it produced.
 """
 
 import logging
+import re
 import time
 from dataclasses import asdict, dataclass, field
 
 from rag.config import settings
-from rag.ingest.figure import FigureHint, detect_figures
+from rag.ingest.figure import hints_from_pages, figure_reason
 from rag.ingest.ocr import OcrError, describe_figure, ocr_local, ocr_page
 from rag.ingest.render import render_page
 from rag.ingest.table import tables_to_markdown
@@ -61,37 +62,35 @@ class PageResult:
     blocks: list[Block] = field(default_factory=list)
 
 
-def plan_pages(
-    doc: dict,
-    hints: dict[int, FigureHint],
-    api_pages: set[int],
-) -> list[PagePlan]:
+def plan_pages(doc: dict) -> list[PagePlan]:
     """Decide routes per page. Pure function: no network, no rendering."""
     plans: list[PagePlan] = []
     for page in doc["pages"]:
-        no = page["page"]
-        hint = hints.get(no)
-        figure_like = bool(hint and hint.figure_like)
         scan_like = bool(page["scan_like"])
         table_like = bool(page["table_like"])
+        figure_like = bool(page["figure_like"])
 
         routes: list[str] = []
         if scan_like:
             routes.append("ocr")
-            reason = f"正文字符 {page['chars']}，低于阈值，判定无文本层"
+            reason = (
+                f"正文 {page['chars']} 字、图片覆盖 {page.get('image_cover', 0):.0%}，"
+                "内容不在文本层"
+            )
         else:
             routes.append("text")
             reason = f"文本层可用（{page['chars']} 字符）"
         if table_like:
             routes.append("table")
             reason += f"；检测到 {page['tables']} 个表格"
-        if figure_like and hint:
+        if figure_like:
             routes.append("figure")
-            reason += f"；{hint.reason}"
+            detail = figure_reason(page)
+            reason += f"；{detail}" if detail else "；判定为图形页"
 
         plans.append(
             PagePlan(
-                page=no,
+                page=page["page"],
                 chars=page["chars"],
                 scan_like=scan_like,
                 table_like=table_like,
@@ -101,6 +100,17 @@ def plan_pages(
             )
         )
     return plans
+
+
+def _strip_covered_lines(text: str, tables: list[str]) -> str:
+    """Drop text lines that a table block already contains, keep everything else."""
+    flat = re.sub(r"\s+", "", " ".join(tables))
+    kept = [
+        line
+        for line in text.splitlines()
+        if re.sub(r"\s+", "", line) and re.sub(r"\s+", "", line) not in flat
+    ]
+    return "\n".join(kept).strip()
 
 
 def _budget_pages(plans: list[PagePlan], limit: int) -> set[int]:
@@ -118,8 +128,8 @@ def enhance(
     started = time.perf_counter()
     emit = on_event or (lambda event: None)
 
-    hints = detect_figures(doc["path"], set(doc["table_like_pages"]))
-    plans = plan_pages(doc, hints, set())
+    hints = hints_from_pages(doc["pages"])
+    plans = plan_pages(doc)
     limit = settings.ocr_max_pages if limit_pages is None else limit_pages
     allowed = _budget_pages(plans, limit)
     vision_off = not settings.ocr_ready
@@ -200,18 +210,20 @@ def enhance(
                     blocks.append(Block("table", item, "pdfplumber", table_ms))
 
                 # The raw text of a table page already contains the same rows, only
-                # flattened. Keeping both puts the same content into the corpus twice,
-                # so the plain text is dropped once the structured form covers most of
-                # the page. A page with prose plus a small table keeps both.
+                # flattened. Dropping the whole text block would also lose the prose
+                # around a table, so only the lines the table already covers are
+                # removed; a page whose entire text is the table ends up with no text
+                # block at all.
                 text_block = next((b for b in blocks if b.type == "text"), None)
                 table_chars = sum(len(item) for item in tables)
-                replaced = bool(
-                    text_block
-                    and table_chars >= 0.5 * max(len(text_block.text), 1)
-                    and table_chars >= 200
-                )
-                if replaced:
-                    blocks.remove(text_block)
+                replaced = False
+                if text_block and tables:
+                    remaining = _strip_covered_lines(text_block.text, tables)
+                    replaced = remaining != text_block.text
+                    if remaining.strip():
+                        text_block.text = remaining
+                    else:
+                        blocks.remove(text_block)
 
                 emit({"stage": "route_done", "page": plan.page, "route": "table",
                       "ms": table_ms, "chars": table_chars, "replaced_text": replaced})
