@@ -4,7 +4,6 @@ __pycache__/
 venv/
 .env
 data/uploads/
-data/samples/
 data/index/
 .pytest_cache/
 .idea/
