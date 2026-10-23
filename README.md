@@ -105,29 +105,38 @@ LLM_TIMEOUT=90
 ### 5. 验证配置
 
 ```bash
-python check_llm.py
+python check_llm.py          # 问答 + 向量
+python check_llm.py --ocr    # 再加一次视觉调用（会计费）
 ```
 
-该脚本依次完成三件事：打印当前配置、拉取平台模型列表并高亮 DeepSeek 相关 ID、发送一次 `ping` 对话请求。
-
-正常输出形如：
+一条命令把四类模型的**存在性**和三条通道的**连通性**都验一遍，不用等到页面上报错才发现配错站点或模型 ID 下架：
 
 ```
 == 当前配置 ==
 LLM_BASE_URL : https://api.siliconflow.cn/v1
-LLM_MODEL    : deepseek-ai/DeepSeek-V3
-LLM_API_KEY  : sk-abc…
+LLM_MODEL    : deepseek-ai/DeepSeek-V3  (问答)
+OCR_MODEL    : Qwen/Qwen3-VL-32B-Instruct  (OCR, 已启用)
+VISION_MODEL : Qwen/Qwen3-VL-32B-Instruct  (图注)
+EMBED_MODEL  : BAAI/bge-m3  (向量)
+LLM_API_KEY  : sk-wyy…vbih
 
-平台可用模型 92 个，其中 DeepSeek 相关 4 个：
-  - deepseek-ai/DeepSeek-R1
-  - deepseek-ai/DeepSeek-V3  ← 当前配置
-  ...
+== 模型可用性 ==
+平台可用模型 99 个
+  OK   deepseek-ai/DeepSeek-V3                (问答)
+  OK   Qwen/Qwen3-VL-32B-Instruct             (OCR/图注)
+  OK   BAAI/bge-m3                            (向量)
 
-对话测试成功，返回：'pong'
-配置可用，可以启动：python run.py
+== 连通性 ==
+  OK   chat      1.3s  返回 'pong'
+  OK   embed     0.3s  1024 维
+  SKIP ocr       加 --ocr 可实测一次（会产生一次调用）
+
+全部通过，可以启动：python run.py
 ```
 
-若 `LLM_MODEL` 不在返回列表中，脚本会直接提示，不必等到页面上报错。
+带 `MISS` 的行表示该模型 ID 在当前站点不存在（常见于 `.cn` 与 `.com` 混用、或模型已下架），`402` 表示余额不足，`401` 表示 Key 不属于这个站点。
+
+退出码：`0` 全部通过，`1` 未配置，`2` 有通道不可用，`3` 模型 ID 缺失。
 
 ### 6. 常见错误对照
 

@@ -9,7 +9,7 @@ from rag.chunk.semantic import semantic_split
 from rag.chunk.structure import build_sections
 from rag.chunk.table import split_markdown_table_guard
 from rag.embed.client import embed_ready
-from rag.chunk.types import Chunk, Section
+from rag.chunk.types import Chunk
 
 
 def _top(path: str) -> str:

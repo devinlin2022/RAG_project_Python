@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field
 
 from rag.config import settings
 from rag.ingest.figure import hints_from_pages, figure_reason
-from rag.ingest.ocr import OcrError, describe_figure, ocr_local, ocr_page
+from rag.ingest.ocr import OcrError, describe_figure, ocr_page
 from rag.ingest.render import render_page
 from rag.ingest.table import tables_to_markdown
 
@@ -295,7 +295,3 @@ def all_blocks(doc: dict) -> list[tuple[int, Block]]:
             pairs.append((page["page"], block))
     return pairs
 
-
-def to_local_ocr(png: bytes):
-    """Expose the offline backend without importing it in the UI layer."""
-    return ocr_local(png)
