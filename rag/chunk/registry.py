@@ -1,0 +1,148 @@
+"""Strategy dispatch and side-by-side comparison."""
+
+import time
+
+from rag.chunk.hybrid import chunk_hybrid, chunk_structured
+from rag.chunk.metrics import composite
+from rag.chunk.profile import profile_document
+from rag.chunk.recursive import chunk_recursive
+from rag.chunk.semantic import chunk_semantic
+from rag.chunk.types import Chunk
+
+STRATEGIES = ("hybrid", "structured", "semantic", "recursive")
+
+LABELS = {
+    "hybrid": "混合（结构+语义）",
+    "structured": "结构化（标题/条款）",
+    "semantic": "语义切分",
+    "recursive": "递归切分",
+    "auto": "自动推荐",
+}
+
+
+def _as_text_pairs(pairs: list[tuple[int, object]]) -> list[tuple[int, str]]:
+    return [(page, getattr(block, "text", "")) for page, block in pairs]
+
+
+def chunk_document(
+    pairs: list[tuple[int, object]],
+    strategy: str = "auto",
+    size: int = 500,
+    overlap: int = 80,
+    min_chars: int = 120,
+    percentile: float = 85.0,
+    pages: int = 0,
+    table_pages: int = 0,
+    figure_pages: int = 0,
+) -> dict:
+    """Chunk a parsed document. `auto` profiles first, then dispatches."""
+    if not pairs:
+        return {"chunks": [], "strategy": strategy, "ms": 0, "info": {"error": "文档为空"}}
+
+    profile = None
+    if strategy == "auto":
+        profile = profile_document(pairs, pages, table_pages, figure_pages)
+        strategy = profile.strategy
+        size = profile.chunk_size
+        overlap = profile.overlap
+
+    if strategy not in STRATEGIES:
+        strategy = "recursive"
+
+    started = time.perf_counter()
+    info: dict = {}
+
+    if strategy == "hybrid":
+        chunks, info = chunk_hybrid(
+            pairs, size=size, overlap=overlap, min_chars=min_chars, percentile=percentile
+        )
+    elif strategy == "structured":
+        chunks, info = chunk_structured(
+            pairs, size=size, overlap=overlap, min_chars=min_chars, strategy="structured"
+        )
+    elif strategy == "semantic":
+        chunks, info = chunk_semantic(
+            _as_text_pairs(pairs), size=size, overlap=overlap, min_chars=min_chars, percentile=percentile
+        )
+    else:
+        chunks = chunk_recursive(_as_text_pairs(pairs), size=size, overlap=overlap)
+        info = {"mode": "recursive"}
+
+    elapsed = int((time.perf_counter() - started) * 1000)
+    source = "\n".join(getattr(block, "text", "") for _, block in pairs)
+
+    return {
+        "chunks": chunks,
+        "strategy": strategy,
+        "ms": elapsed,
+        "size": size,
+        "overlap": overlap,
+        "info": info,
+        "metrics": composite(chunks, source, min_chars, size),
+        "profile": profile.to_dict() if profile else None,
+    }
+
+
+def compare_strategies(
+    pairs: list[tuple[int, object]],
+    size: int = 500,
+    overlap: int = 80,
+    min_chars: int = 120,
+    percentile: float = 85.0,
+    pages: int = 0,
+    table_pages: int = 0,
+    figure_pages: int = 0,
+) -> list[dict]:
+    """Run all four strategies and return comparable rows, recommendation first."""
+    profile = profile_document(pairs, pages, table_pages, figure_pages)
+    rows: list[dict] = []
+
+    for strategy in STRATEGIES:
+        started = time.perf_counter()
+        try:
+            if strategy == "hybrid":
+                chunks, _ = chunk_hybrid(
+                    pairs, size=size, overlap=overlap, min_chars=min_chars, percentile=percentile
+                )
+            elif strategy == "structured":
+                chunks, _ = chunk_structured(
+                    pairs, size=size, overlap=overlap, min_chars=min_chars, strategy="structured"
+                )
+            elif strategy == "semantic":
+                chunks, _ = chunk_semantic(
+                    _as_text_pairs(pairs), size=size, overlap=overlap, min_chars=min_chars,
+                    percentile=percentile,
+                )
+            else:
+                chunks = chunk_recursive(_as_text_pairs(pairs), size=size, overlap=overlap)
+            error = ""
+        except Exception as exc:  # one bad strategy must not kill the table
+            chunks, error = [], str(exc)
+
+        elapsed = int((time.perf_counter() - started) * 1000)
+        source = "\n".join(getattr(block, "text", "") for _, block in pairs)
+        metrics = composite(chunks, source, min_chars, size) if chunks else {}
+        rows.append(
+            {
+                "strategy": strategy,
+                "label": LABELS[strategy],
+                "recommended": strategy == profile.strategy,
+                "chunks": len(chunks),
+                "avg_chars": metrics.get("avg_chars", 0),
+                "clause_integrity": metrics.get("clause_integrity", 0.0),
+                "boundary_violation": metrics.get("boundary_violation", 0.0),
+                "size_conformance": metrics.get("size_conformance", 0.0),
+                "section_coverage": metrics.get("section_coverage", 0.0),
+                "struct_score": metrics.get("struct_score", 0.0),
+                "ms": elapsed,
+                "error": error,
+            }
+        )
+
+    rows.sort(key=lambda row: (not row["recommended"], -row["struct_score"]))
+    return rows
+
+
+def chunk_preview(chunk: Chunk, width: int = 90) -> str:
+    text = " ".join(chunk.text.split())
+    return text[:width] + ("…" if len(text) > width else "")
