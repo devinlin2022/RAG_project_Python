@@ -5,10 +5,19 @@ pydantic>=2.7.0
 pydantic-settings>=2.3.0
 python-multipart>=0.0.9
 requests>=2.31.0
+numpy>=1.26.0
 
-# PDF 解析
+# PDF parsing
 pdfminer.six>=20231228
 pdfplumber>=0.11.0
+# Render pages to PNG for OCR
+pypdfium2>=4.30.0
 
-# 测试
+# Public tunnel (optional, only when NGROK_ENABLED=true)
+pyngrok>=7.0.0
+
+# Offline OCR fallback (optional, ~120 MB with onnxruntime)
+# rapidocr-onnxruntime>=1.4.0
+
+# Tests
 pytest>=8.0.0

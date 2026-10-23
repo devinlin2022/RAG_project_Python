@@ -30,10 +30,33 @@ class Settings(BaseSettings):
     table_column_ratio: float = 0.4
     max_context_chars: int = 12000
 
-    # Reserved for V2
-    chunk_strategy: str = "semantic"
+    # Public tunnel (optional)
+    ngrok_enabled: bool = False
+    ngrok_authtoken: str = ""
+
+    # OCR / figure recognition. Reuses the chat key by default.
+    ocr_enabled: bool = False
+    ocr_base_url: str = ""
+    ocr_api_key: str = ""
+    ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"
+    vision_model: str = "Qwen/Qwen2.5-VL-72B-Instruct"
+    ocr_render_dpi: int = 150
+    ocr_max_pages: int = 20
+    ocr_timeout: int = 120
+    enhance_max_seconds: int = 120
+
+    # Embeddings (semantic chunking). bge-m3 is free on SiliconFlow.
+    embed_base_url: str = ""
+    embed_api_key: str = ""
+    embed_model: str = "BAAI/bge-m3"
+    embed_batch: int = 32
+
+    # Chunking
+    chunk_strategy: str = "auto"
     chunk_size: int = 500
     chunk_overlap: int = 80
+    chunk_min_chars: int = 120
+    semantic_percentile: float = 85.0
 
     @property
     def upload_dir(self) -> Path:
@@ -52,6 +75,31 @@ class Settings(BaseSettings):
     @property
     def models_url(self) -> str:
         return self.llm_base_url.rstrip("/") + "/models"
+
+    # OCR and embeddings fall back to the chat key so one .env is enough.
+    @property
+    def ocr_base_url_resolved(self) -> str:
+        return (self.ocr_base_url or self.llm_base_url).rstrip("/")
+
+    @property
+    def ocr_api_key_resolved(self) -> str:
+        return (self.ocr_api_key or self.llm_api_key).strip()
+
+    @property
+    def ocr_ready(self) -> bool:
+        return self.ocr_enabled and bool(self.ocr_api_key_resolved)
+
+    @property
+    def embed_base_url_resolved(self) -> str:
+        return (self.embed_base_url or self.llm_base_url).rstrip("/")
+
+    @property
+    def embed_api_key_resolved(self) -> str:
+        return (self.embed_api_key or self.llm_api_key).strip()
+
+    @property
+    def embed_ready(self) -> bool:
+        return bool(self.embed_api_key_resolved)
 
 
 settings = Settings()
