@@ -3,8 +3,8 @@
 from rag.ingest.table import split_markdown_table, tables_to_markdown, text_tables
 
 PIPE_PAGE = """Item | Category | Approval Required | Owner
-Row01 | Direct Materials | CRMC | Capital Management | Checked
-Row02 | Direct Materials | CRMC | Capital Management | Checked
+Row01 | Direct Materials | Committee | Capital Management | Checked
+Row02 | Direct Materials | Committee | Capital Management | Checked
 Row03 | Indirect | IT | IT Manager | Pending
 """
 

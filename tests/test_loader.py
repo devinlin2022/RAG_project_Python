@@ -33,7 +33,7 @@ def test_columnar_text_is_flagged_as_table():
     from rag.ingest.loader import annotate
 
     text = "\n".join(
-        f"Row{i:02d}    Direct Materials    CRMC    Checked" for i in range(10)
+        f"Row{i:02d}    Direct Materials    Committee    Checked" for i in range(10)
     )
     pages = [{"page": 3, "text": text, "chars": len(text), "density": 3.0}]
     result = annotate(pages, {})

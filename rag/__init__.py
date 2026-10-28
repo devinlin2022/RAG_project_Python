@@ -1,7 +1,8 @@
-"""rag-agent: page-level extraction, OCR routing and structure-aware chunking.
+"""rag-agent: PDF assistant with page routing, hybrid retrieval and cited answers.
 
-Version roadmap lives in README. V2 adds OCR/figure rails and four chunking
-strategies; retrieval still arrives in V3.
+V1 page-level extraction, V2 OCR/table/figure routing and structure-aware
+chunking, V3 hybrid retrieval + reranking, V4 streaming and multi-turn,
+V5 SQLite persistence, V6 evaluation, V7 hardening.
 """
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"

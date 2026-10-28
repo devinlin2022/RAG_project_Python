@@ -183,6 +183,35 @@ class TestComparison:
         assert rows["hybrid"]["section_coverage"] > rows["recursive"]["section_coverage"]
 
 
+class TestTocStubs:
+    """A 目录 page makes every entry look like a heading."""
+
+    TOC = """目录
+
+第一章 总则
+第二章 供应商准入与评估
+第三章 采购申请与审批
+第四章 发票校验与付款
+
+第一章 总则
+
+第一条 目的
+本办法适用于示例组织的全部采购活动。
+"""
+
+    def test_toc_entries_do_not_become_chunks(self):
+        pairs = [(1, Block(type="text", text=self.TOC, source="text"))]
+        result = chunk_document(pairs, "hybrid", size=500, pages=1)
+        assert all(len(chunk.text) > 30 for chunk in result["chunks"])
+        assert any("适用于示例组织" in chunk.text for chunk in result["chunks"])
+
+    def test_a_single_short_chunk_survives(self):
+        text = "第一章 总则\n\n第一条 目的\n本办法适用于示例组织的全部采购活动。"
+        pairs = [(1, Block(type="text", text=text, source="text"))]
+        result = chunk_document(pairs, "hybrid", size=500, pages=1)
+        assert result["chunks"]
+
+
 class TestMetrics:
     def test_composite_keys(self, contract_pairs):
         result = chunk_document(contract_pairs, "hybrid", size=500, pages=1)

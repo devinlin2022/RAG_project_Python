@@ -1,34 +1,52 @@
 """Entry point: one process serving both the Gradio UI and the FastAPI routes."""
 
 import logging
+import time
 
 import gradio as gr
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
-from app.api import router
-from app.state import STORE
+from app.api import public, router
+from app.auth import setup_logging
+from app.state import get_service
 from app.ui import build_ui
 from rag.config import VERSION, settings
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-)
+setup_logging()
 log = logging.getLogger("rag-agent")
 
-HOST = "127.0.0.1"
-PORT = 7860
+HOST = settings.app_host
+PORT = settings.app_port
 
 
 def create_app() -> FastAPI:
+    service = get_service()
     api = FastAPI(
         title="rag-agent",
         version=VERSION,
-        description="按页抽取与页级问答（V1，不含检索）",
+        description="PDF 助手：按页抽取、混合检索、精排与带引用问答",
     )
+    api.include_router(public)
     api.include_router(router)
-    return gr.mount_gradio_app(api, build_ui(STORE), path="/")
+
+    @api.middleware("http")
+    async def log_requests(request: Request, call_next):
+        started = time.perf_counter()
+        response = await call_next(request)
+        if request.url.path != "/health":
+            log.info(
+                "%s %s -> %s in %.0fms",
+                request.method,
+                request.url.path,
+                response.status_code,
+                (time.perf_counter() - started) * 1000,
+            )
+        return response
+
+    return gr.mount_gradio_app(
+        api, build_ui(service), path="/", auth=settings.ui_auth
+    )
 
 
 app = create_app()
@@ -59,10 +77,17 @@ def open_tunnel() -> str | None:
 
 
 def main() -> None:
+    service = get_service()
+    stats = service.library.stats()
     print(f"rag-agent v{VERSION}")
     print(f"  base_url : {settings.llm_base_url}")
     print(f"  model    : {settings.llm_model}")
     print(f"  api_key  : {'已配置' if settings.llm_configured else '未配置（问答会提示）'}")
+    print(f"  embed    : {settings.embed_model} {'可用' if settings.embed_ready else '不可用'}")
+    print(f"  rerank   : {settings.rerank_model} {'可用' if settings.rerank_ready else '关闭'}")
+    print(f"  index    : {stats['docs']} 篇 / {stats['chunks']} 块 / {stats['vectors']} 向量")
+    print(f"  auth     : API Key {'必需' if settings.app_api_key else '未启用'}"
+          f"　｜　界面登录 {'启用' if settings.ui_auth else '未启用'}")
     print(f"  页面     : http://{HOST}:{PORT}")
     print(f"  接口文档 : http://{HOST}:{PORT}/docs")
 

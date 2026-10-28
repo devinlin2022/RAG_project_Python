@@ -1,160 +1,106 @@
-%PDF-1.4
+%PDF-1.3
+%“Œ‹ž ReportLab Generated PDF document (opensource)
 1 0 obj
-<< /Type /Catalog /Pages 2 0 R >>
+<<
+/F1 2 0 R
+>>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R] /Count 3 >>
+<<
+/BaseFont /Helvetica /Encoding /WinAnsiEncoding /Name /F1 /Subtype /Type1 /Type /Font
+>>
 endobj
 3 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> >> /Contents 4 0 R >>
+<<
+/Contents 9 0 R /MediaBox [ 0 0 595 842 ] /Parent 8 0 R /Resources <<
+/Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>> /Rotate 0 /Trans <<
+
+>> 
+  /Type /Page
+>>
 endobj
 4 0 obj
-<< /Length 2122 >>
-stream
-BT
-/F1 10 Tf
-12 TL
-40 780 Td
-(Section 1.1: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.2: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.3: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.4: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.5: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.6: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.7: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.8: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.9: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.10: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.11: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.12: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.13: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.14: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.15: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.16: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.17: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.18: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.19: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.20: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.21: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.22: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.23: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.24: This clause describes the approval flow for supplier pricing.) Tj
-T*
-(Section 1.25: This clause describes the approval flow for supplier pricing.) Tj
-T*
-ET
-endstream
+<<
+/Contents 10 0 R /MediaBox [ 0 0 595 842 ] /Parent 8 0 R /Resources <<
+/Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>> /Rotate 0 /Trans <<
+
+>> 
+  /Type /Page
+>>
 endobj
 5 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> >> /Contents 6 0 R >>
+<<
+/Contents 11 0 R /MediaBox [ 0 0 595 842 ] /Parent 8 0 R /Resources <<
+/Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>> /Rotate 0 /Trans <<
+
+>> 
+  /Type /Page
+>>
 endobj
 6 0 obj
-<< /Length 1716 >>
-stream
-BT
-/F1 10 Tf
-12 TL
-40 780 Td
-(Item | Category | Approval Required | Owner) Tj
-T*
-(Row01 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row02 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row03 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row04 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row05 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row06 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row07 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row08 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row09 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row10 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row11 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row12 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row13 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row14 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row15 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row16 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row17 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row18 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row19 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row20 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row21 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row22 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-(Row23 | Direct Materials | CRMC | Capital Management | Checked) Tj
-T*
-ET
-endstream
+<<
+/PageMode /UseNone /Pages 8 0 R /Type /Catalog
+>>
 endobj
 7 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> >> /Contents 8 0 R >>
+<<
+/Author (anonymous) /CreationDate (D:20261029000637+08'00') /Creator (anonymous) /Keywords () /ModDate (D:20261029000637+08'00') /Producer (ReportLab PDF Library - \(opensource\)) 
+  /Subject (unspecified) /Title (untitled) /Trapped /False
+>>
 endobj
 8 0 obj
-<< /Length 0 >>
-stream
-
-endstream
+<<
+/Count 3 /Kids [ 3 0 R 4 0 R 5 0 R ] /Type /Pages
+>>
 endobj
 9 0 obj
-<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+<<
+/Filter [ /ASCII85Decode /FlateDecode ] /Length 369
+>>
+stream
+Gau1-Yti1j&;KpC`BR7Ti&a"q_MD/<2Z*V"37Ls^6qIci:K2lVB1>X^4e*gJbGS,_R!$gLm#JkK^tg5d(nh2F_BD$M(H1/lF.MpKPeJ1e4fWhA4lYTaG3:]R5R#sgm*gQ(BJ3#sCL"G2]u1*;I7-.koD%/Pk_J[1rA\;t9[f*_N+l$m3kZ84KEK*Y+/j>^7^3lSZ9VPMPc4i/Bq]qA"KGEgH)ZL!6WpBWV1p1n7BM7nCT0atL@S4M128A,j[-'c,tTg^/JtXQArp1NS<muP=u)Vkge_d@j3.t?B\4YQ6`h98b1oh:L38n'C>H*Fh-dX.=<lX0[;KrKrA2s7_527+e[iRJh-dX.YfY\qa)5;V$$bc;2u~>endstream
+endobj
+10 0 obj
+<<
+/Filter [ /ASCII85Decode /FlateDecode ] /Length 382
+>>
+stream
+Gatn"9hWDY&4#^]/*<cO1c%_Pp?3k0MQl.PP]#"9Am8be&cD0r74/m73J<&@8`/Y"&6)uGS:(AsF)Z/RJ->9]cl=!D2fS"^5BF6VWD)h$:g'`dHlM#%3r&cJE8Do@0ZK1OGreZ>I.+MJp+L>OoU@tTg[BMP"SW&ekSI:V1M]/A($=*aq6)uuD.^e]gV1u20n^\rmq:;6A!_pi[p2&lrn25hAntj68[DF7Cb<l>NFB8XAm<7@8t)l?9.S9,ij'>3=&!\f8@*/Qfh/R[]?IqqZ]SOfFI/k9QRL[dZ0W+"]/57JU3)`VMG*1dF^&*CGH'of;S#M<MG*1d2&2J+?#%>28\.Qpfd0468JSi_kq7hF,tW;PMI"[1]7e]Npsd$`~>endstream
+endobj
+11 0 obj
+<<
+/Filter [ /ASCII85Decode /FlateDecode ] /Length 59
+>>
+stream
+GapQh0E=F,0U\H3T\pNYT^QKk?tc>IP,;W#U1^23ihPEM_PP$O!3^,C5Q~>endstream
 endobj
 xref
-0 10
+0 12
 0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000127 00000 n 
-0000000253 00000 n 
-0000002427 00000 n 
-0000002553 00000 n 
-0000004321 00000 n 
-0000004447 00000 n 
-0000004496 00000 n 
+0000000061 00000 n 
+0000000092 00000 n 
+0000000199 00000 n 
+0000000392 00000 n 
+0000000586 00000 n 
+0000000780 00000 n 
+0000000848 00000 n 
+0000001109 00000 n 
+0000001180 00000 n 
+0000001639 00000 n 
+0000002112 00000 n 
 trailer
-<< /Size 10 /Root 1 0 R >>
+<<
+/ID 
+[<12ea1c3766d46f8be42a37222f37d9e7><12ea1c3766d46f8be42a37222f37d9e7>]
+% ReportLab generated PDF document -- digest (opensource)
+
+/Info 7 0 R
+/Root 6 0 R
+/Size 12
+>>
 startxref
-4566
+2261
 %%EOF

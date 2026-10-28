@@ -62,11 +62,58 @@ class Settings(BaseSettings):
     chunk_min_chars: int = 120
     semantic_percentile: float = 85.0
 
+    # Retrieval (V3)
+    retrieve_top_k: int = 6
+    rerank_candidates: int = 24
+    rrf_k: int = 60
+    retrieve_strategy: str = "rrf"  # dense | sparse | rrf
+    rerank_enabled: bool = True
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_timeout: int = 60
+    # Below this cross-encoder score a hit is treated as irrelevant
+    rerank_floor: float = 0.0
+
+    # Multi-turn and streaming (V4)
+    history_turns: int = 3
+    rewrite_enabled: bool = True
+
+    # Storage (V5)
+    db_filename: str = "rag.sqlite"
+    max_upload_mb: int = 60
+
+    # Hardening (V7)
+    app_host: str = "127.0.0.1"
+    app_port: int = 7860
+    app_api_key: str = ""
+    ui_username: str = "admin"
+    ui_password: str = ""
+    rate_limit_per_min: int = 30
+    log_json: bool = True
+
     @property
     def upload_dir(self) -> Path:
         path = BASE_DIR / "data" / "uploads"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @property
+    def db_path(self) -> Path:
+        path = BASE_DIR / "data" / self.db_filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def rerank_ready(self) -> bool:
+        return self.rerank_enabled and bool(self.llm_api_key.strip())
+
+    @property
+    def rerank_url(self) -> str:
+        return self.llm_base_url.rstrip("/") + "/rerank"
+
+    @property
+    def ui_auth(self) -> tuple[str, str] | None:
+        """Gradio login, enabled only when a password is configured."""
+        return (self.ui_username, self.ui_password) if self.ui_password.strip() else None
 
     @property
     def llm_configured(self) -> bool:

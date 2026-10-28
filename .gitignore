@@ -5,6 +5,9 @@ venv/
 .env
 data/uploads/
 data/index/
+data/rag.sqlite
+data/rag.sqlite-*
+eval/report.md
 .pytest_cache/
 .idea/
 .vscode/

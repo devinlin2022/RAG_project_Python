@@ -1,0 +1,21 @@
+{"id": "q01", "doc": "demo-policy", "q": "本办法适用于哪些采购活动？", "pages": [2], "answerable": true}
+{"id": "q02", "doc": "demo-policy", "q": "供应商申请准入需要提交哪些材料？", "pages": [3], "answerable": true}
+{"id": "q03", "doc": "demo-policy", "q": "A、B、C 三级供应商各自的复评周期是多久？", "pages": [3], "answerable": true}
+{"id": "q04", "doc": "demo-policy", "q": "出现哪些情形会暂停供应商的合作资格？", "pages": [3], "answerable": true}
+{"id": "q05", "doc": "demo-policy", "q": "两百万到五百万元的采购由谁审批，是否需要集体决策？", "pages": [4], "answerable": true}
+{"id": "q06", "doc": "demo-policy", "q": "哪些情况可以采用单一来源方式采购？", "pages": [4], "answerable": true}
+{"id": "q07", "doc": "demo-policy", "q": "紧急采购之后要在多长时间内补办审批手续？", "pages": [4], "answerable": true}
+{"id": "q08", "doc": "demo-policy", "q": "完整的采购流程包含哪几个环节？", "pages": [5, 4], "answerable": true}
+{"id": "q09", "doc": "demo-policy", "q": "发票到达后多长时间内要完成三单匹配？", "pages": [6], "answerable": true}
+{"id": "q10", "doc": "demo-policy", "q": "付款账期最长不能超过多少天？", "pages": [6], "answerable": true}
+{"id": "q11", "doc": "demo-policy", "q": "质保金的比例是多少，什么条件下退还？", "pages": [6], "answerable": true}
+{"id": "q12", "doc": "demo-policy", "q": "预付款的比例上限和担保要求是什么？", "pages": [6], "answerable": true}
+{"id": "q13", "doc": "demo-policy", "q": "采购档案需要保存多少年，包含哪些材料？", "pages": [7], "answerable": true}
+{"id": "q14", "doc": "demo-policy", "q": "内部审计部门每年对采购事项的抽查比例是多少？", "pages": [7], "answerable": true}
+{"id": "q15", "doc": "demo-policy", "q": "本办法从什么时候开始施行，由哪个部门解释？", "pages": [8], "answerable": true}
+{"id": "q16", "doc": "demo-policy", "q": "采购合同发生争议时怎么解决？", "pages": [8], "answerable": true}
+{"id": "q17", "doc": "demo-policy", "q": "供应商退出后多长时间内不再准入？", "pages": [3], "answerable": true}
+{"id": "q18", "doc": "demo-policy", "q": "超预算的采购申请应该怎么处理？", "pages": [4], "answerable": true}
+{"id": "q19", "doc": "demo-policy", "q": "电子签章平台由哪家服务商提供？", "pages": [], "answerable": false}
+{"id": "q20", "doc": "demo-policy", "q": "海外子公司的转让定价规则是怎样的？", "pages": [], "answerable": false}
+{"id": "q21", "doc": "demo-policy", "q": "采购系统与财务系统之间的接口使用哪种消息协议？", "pages": [], "answerable": false}

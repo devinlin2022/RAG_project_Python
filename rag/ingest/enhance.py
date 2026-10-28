@@ -48,6 +48,7 @@ class PageResult:
     engine: str = ""
     error: str = ""
     blocks: list[Block] = field(default_factory=list)
+    cached: bool = False
 
 
 def plan_pages(doc: dict) -> list[PagePlan]:
@@ -101,9 +102,13 @@ def _strip_covered_lines(text: str, tables: list[str]) -> str:
     return "\n".join(kept).strip()
 
 
-def _budget_pages(plans: list[PagePlan], limit: int) -> set[int]:
+def _budget_pages(plans: list[PagePlan], limit: int, done: set[int]) -> set[int]:
     """Pages allowed to call a vision model, in document order."""
-    candidates = [p.page for p in plans if "ocr" in p.routes or "figure" in p.routes]
+    candidates = [
+        p.page
+        for p in plans
+        if ("ocr" in p.routes or "figure" in p.routes) and p.page not in done
+    ]
     return set(candidates[:limit]) if limit > 0 else set(candidates)
 
 
@@ -111,25 +116,53 @@ def enhance(
     doc: dict,
     limit_pages: int | None = None,
     on_event=None,
+    force: bool = False,
 ) -> dict:
-    """Run the enhancement rails and return a report. Blocks are stored on the doc."""
+    """Run the enhancement rails and return a report. Blocks are stored on the doc.
+
+    Pages whose blocks are already persisted are reused: a vision call is paid
+    once, and a run that hit the budget can be resumed without redoing the rest.
+    """
     started = time.perf_counter()
     emit = on_event or (lambda event: None)
 
     hints = hints_from_pages(doc["pages"])
     plans = plan_pages(doc)
     limit = settings.ocr_max_pages if limit_pages is None else limit_pages
-    allowed = _budget_pages(plans, limit)
+    done_pages = set() if force else set((doc.get("blocks") or {}).keys())
+    allowed = _budget_pages(plans, limit, done_pages)
     vision_off = not settings.ocr_ready
 
     emit({"stage": "plan", "plans": [asdict(p) for p in plans]})
 
     results: list[PageResult] = []
     api_calls = 0
+    cached = 0
     skipped: list[int] = []
     total_started = time.perf_counter()
 
     for plan in plans:
+        if plan.page in done_pages:
+            kept = doc["blocks"][plan.page]
+            cached += 1
+            results.append(
+                PageResult(
+                    page=plan.page,
+                    routes=plan.routes,
+                    status="done",
+                    chars_before=plan.chars,
+                    chars_after=sum(len(block.text) for block in kept),
+                    ms=0,
+                    engine=next(
+                        (b.source for b in kept if b.type in ("ocr", "figure")), ""
+                    ),
+                    blocks=kept,
+                    cached=True,
+                )
+            )
+            emit({"stage": "cached", "page": plan.page})
+            continue
+
         page_started = time.perf_counter()
         page = doc["pages"][plan.page - 1]
         blocks: list[Block] = []
@@ -256,12 +289,17 @@ def enhance(
         emit({"stage": "page_done", "page": plan.page, "ms": results[-1].ms,
               "chars": chars_after, "error": error})
 
+    doc["blocks"] = {
+        **(doc.get("blocks") or {}),
+        **{r.page: r.blocks for r in results if r.status == "done" and r.blocks},
+    }
     report = {
         "pages": results,
         "plans": plans,
         "hints": hints,
         "ms": int((time.perf_counter() - started) * 1000),
         "api_calls": api_calls,
+        "cached": cached,
         "skipped": skipped,
         "ocr_ready": settings.ocr_ready,
         "ocr_model": settings.ocr_model,

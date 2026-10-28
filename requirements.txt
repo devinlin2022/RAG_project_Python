@@ -13,6 +13,9 @@ pdfplumber>=0.11.0
 # Render pages to PNG for OCR
 pypdfium2>=4.30.0
 
+# Chinese word segmentation for BM25 (optional: falls back to character bigrams)
+jieba>=0.42.1
+
 # Public tunnel (optional, only when NGROK_ENABLED=true)
 pyngrok>=7.0.0
 

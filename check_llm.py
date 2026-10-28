@@ -1,7 +1,7 @@
-"""Verify .env against the live API: model ids, chat, embedding, optional OCR.
+"""Verify .env against the live API: model ids, chat, embedding, rerank, OCR.
 
 Usage:
-    python check_llm.py            # chat + embedding
+    python check_llm.py            # chat + embedding + rerank
     python check_llm.py --ocr      # also one vision call (costs a page)
 """
 
@@ -25,6 +25,7 @@ def show_config() -> None:
     print(f"OCR_MODEL    : {settings.ocr_model}  (OCR, {'已启用' if settings.ocr_enabled else '未启用'})")
     print(f"VISION_MODEL : {settings.vision_model}  (图注)")
     print(f"EMBED_MODEL  : {settings.embed_model}  (向量)")
+    print(f"RERANK_MODEL : {settings.rerank_model}  (精排, {'已启用' if settings.rerank_enabled else '关闭'})")
     print(f"LLM_API_KEY  : {mask(settings.llm_api_key) if settings.llm_configured else '未配置'}")
 
 
@@ -50,6 +51,7 @@ def check_models(headers: dict) -> tuple[bool, list[str]]:
         (settings.ocr_model, "OCR"),
         (settings.vision_model, "图注"),
         (settings.embed_model, "向量"),
+        (settings.rerank_model, "精排"),
     ):
         wanted.setdefault(model_id, []).append(role)
 
@@ -110,6 +112,25 @@ def check_embedding(headers: dict) -> bool:
     return True
 
 
+def check_rerank(headers: dict) -> bool:
+    """One rerank call: proves both the endpoint and the model id."""
+    if not settings.rerank_enabled:
+        print("  SKIP rerank    已关闭（RERANK_ENABLED=false）")
+        return True
+    from rag.retrieve.reranker import RerankError, rerank
+
+    started = time.perf_counter()
+    try:
+        pairs = rerank("付款账期", ["验收合格后三十日内付款", "本页描述采购流程示意图"])
+    except RerankError as exc:
+        print(f"  FAIL rerank    {exc}")
+        return False
+    elapsed = time.perf_counter() - started
+    top = pairs[0] if pairs else (None, 0.0)
+    print(f"  OK   rerank    {elapsed:.1f}s  首位得分 {top[1]:.3f}  {settings.rerank_model}")
+    return top[0] == 0
+
+
 def check_ocr() -> bool:
     if not settings.ocr_enabled:
         print("  SKIP ocr       未启用（OCR_ENABLED=false），表格通道不受影响")
@@ -131,7 +152,7 @@ def _probe_png() -> bytes:
     from PIL import Image, ImageDraw
 
     image = Image.new("RGB", (600, 200), "white")
-    ImageDraw.Draw(image).text((30, 80), "APAC Procurement 12345", fill="black")
+    ImageDraw.Draw(image).text((30, 80), "RAG DEMO 12345", fill="black")
     import io
 
     buffer = io.BytesIO()
@@ -154,11 +175,12 @@ def main() -> int:
     print("\n== 连通性 ==")
     chat_ok = check_chat(headers)
     embed_ok = check_embedding(headers)
+    rerank_ok = check_rerank(headers)
     ocr_ok = check_ocr() if "--ocr" in sys.argv else True
     if "--ocr" not in sys.argv and settings.ocr_enabled:
         print("  SKIP ocr       加 --ocr 可实测一次（会产生一次调用）")
 
-    if not (chat_ok and embed_ok and ocr_ok):
+    if not (chat_ok and embed_ok and ocr_ok and rerank_ok):
         print("\n有通道不可用，先修好再启动。")
         return 2
     if not models_ok:
