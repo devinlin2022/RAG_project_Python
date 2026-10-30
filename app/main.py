@@ -9,6 +9,12 @@ import importlib
 import logging
 import os
 import sys
+from pathlib import Path
+
+# `python app/main.py` puts app/ on sys.path, so `import app.api` fails there.
+# Colab users type exactly that, so make both spellings work.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import uvicorn
 from fastapi import FastAPI
