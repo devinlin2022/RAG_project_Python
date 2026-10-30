@@ -1,10 +1,19 @@
-"""Dense, lexical and fused retrieval. One function, three strategies."""
+"""Dense, lexical and fused retrieval. One generator, three strategies.
+
+The rails are independent, so they run in two threads and the caller is told
+about each stage as it lands -- that is what the UI's thinking panel renders.
+`search()` consumes the same generator, so the trace can never drift from what
+actually happened.
+"""
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from typing import Iterator
 
 from rag.index.fusion import rrf
 from rag.index.library import ChunkLibrary, Record
+from rag.index.tokenize import tokenize
 
 
 @dataclass
@@ -22,7 +31,19 @@ class Hit:
         return self.record.page_label
 
 
-def search(
+def _top_preview(library: ChunkLibrary, hits: list[tuple[int, float]], limit: int = 3) -> list[dict]:
+    return [
+        {
+            "filename": library.records[row].filename,
+            "page": library.records[row].page_from,
+            "score": round(score, 4),
+            "preview": " ".join(library.records[row].text.split())[:48],
+        }
+        for row, score in hits[:limit]
+    ]
+
+
+def search_steps(
     query: str,
     query_vec: list[float] | None,
     library: ChunkLibrary,
@@ -31,12 +52,11 @@ def search(
     candidates: int = 24,
     doc_ids: list[str] | None = None,
     rrf_k: int = 60,
-) -> tuple[list[Hit], dict]:
-    """Return ranked hits plus per-stage timings.
+) -> Iterator[tuple[str, dict]]:
+    """Yield ("dense_start"|"dense_done"|..., payload) and finally ("final", ...).
 
-    `strategy` is dense / sparse / rrf. When the vector index is empty (no
-    embedding key) a dense request degrades to sparse instead of returning
-    nothing, and the caller is told through `info["degraded"]`.
+    When the vector index is empty (no embedding key) a dense request degrades
+    to sparse instead of returning nothing, and `info["degraded"]` says so.
     """
     info: dict = {"degraded": ""}
     pool = max(candidates, top_k)
@@ -45,30 +65,76 @@ def search(
 
     dense_order: list[int] = []
     sparse_order: list[int] = []
+    want_dense = strategy in ("dense", "rrf") and query_vec is not None and len(library.dense)
+    want_sparse = strategy in ("sparse", "rrf")
 
-    started = time.perf_counter()
-    if strategy in ("dense", "rrf") and query_vec is not None and len(library.dense):
-        for rank, (row, score) in enumerate(
-            library.dense_search(query_vec, pool, doc_ids), start=1
-        ):
-            record = library.records[row]
-            hits[row] = Hit(record=record, score=score, dense=score, rank_dense=rank)
-            dense_order.append(row)
-    elif strategy == "dense":
+    if strategy == "dense" and not want_dense:
         info["degraded"] = "向量索引为空（未配置 Embedding 或未建索引），本次退化为关键词检索"
         strategy = "sparse"
-    timings["dense_ms"] = round((time.perf_counter() - started) * 1000, 1)
+        want_sparse = True
 
-    started = time.perf_counter()
-    if strategy in ("sparse", "rrf"):
-        for rank, (row, score) in enumerate(library.sparse_search(query, pool, doc_ids), start=1):
-            if row in hits:
-                hits[row].sparse = score
-                hits[row].rank_sparse = rank
-            else:
-                hits[row] = Hit(record=library.records[row], score=score, sparse=score, rank_sparse=rank)
-            sparse_order.append(row)
-    timings["sparse_ms"] = round((time.perf_counter() - started) * 1000, 1)
+    def run_dense() -> tuple[list[tuple[int, float]], float]:
+        started = time.perf_counter()
+        found = library.dense_search(query_vec, pool, doc_ids)
+        return found, round((time.perf_counter() - started) * 1000, 1)
+
+    def run_sparse() -> tuple[list[tuple[int, float]], float]:
+        started = time.perf_counter()
+        found = library.sparse_search(query, pool, doc_ids)
+        return found, round((time.perf_counter() - started) * 1000, 1)
+
+    if want_dense:
+        yield "dense_start", {"model": library.embed_model, "vectors": len(library.dense)}
+    if want_sparse:
+        yield "sparse_start", {"terms": tokenize(query)[:12], "chunks": len(library.records)}
+
+    dense_result: list[tuple[int, float]] = []
+    sparse_result: list[tuple[int, float]] = []
+    if want_dense and want_sparse:
+        with ThreadPoolExecutor(max_workers=2) as pool_exec:
+            futures = {"dense": pool_exec.submit(run_dense), "sparse": pool_exec.submit(run_sparse)}
+            for future in as_completed(list(futures.values())):
+                name = next(key for key, value in futures.items() if value is future)
+                found, ms = future.result()
+                timings[f"{name}_ms"] = ms
+                if name == "dense":
+                    dense_result = found
+                    for rank, (row, score) in enumerate(found, start=1):
+                        hits[row] = Hit(library.records[row], score, dense=score, rank_dense=rank)
+                    yield "dense_done", {
+                        "hits": len(found),
+                        "ms": ms,
+                        "top": _top_preview(library, found),
+                    }
+                else:
+                    sparse_result = found
+                    for rank, (row, score) in enumerate(found, start=1):
+                        if row in hits:
+                            hits[row].sparse = score
+                            hits[row].rank_sparse = rank
+                        else:
+                            hits[row] = Hit(library.records[row], score, sparse=score, rank_sparse=rank)
+                    yield "sparse_done", {
+                        "hits": len(found),
+                        "ms": ms,
+                        "top": _top_preview(library, found),
+                    }
+    else:
+        if want_dense:
+            dense_result, ms = run_dense()
+            timings["dense_ms"] = ms
+            for rank, (row, score) in enumerate(dense_result, start=1):
+                hits[row] = Hit(library.records[row], score, dense=score, rank_dense=rank)
+            yield "dense_done", {"hits": len(dense_result), "ms": ms, "top": _top_preview(library, dense_result)}
+        if want_sparse:
+            sparse_result, ms = run_sparse()
+            timings["sparse_ms"] = ms
+            for rank, (row, score) in enumerate(sparse_result, start=1):
+                hits[row] = Hit(library.records[row], score, sparse=score, rank_sparse=rank)
+            yield "sparse_done", {"hits": len(sparse_result), "ms": ms, "top": _top_preview(library, sparse_result)}
+
+    dense_order = [row for row, _ in dense_result]
+    sparse_order = [row for row, _ in sparse_result]
 
     started = time.perf_counter()
     if strategy == "rrf":
@@ -85,7 +151,36 @@ def search(
     info["dense_hits"] = len(dense_order)
     info["sparse_hits"] = len(sparse_order)
     info["timings"] = timings
-    return result[:pool], info
+
+    if strategy == "rrf":
+        yield "fuse_done", {
+            "candidates": len(result),
+            "ms": timings["fuse_ms"],
+            "k": rrf_k,
+            "dense": len(dense_order),
+            "sparse": len(sparse_order),
+        }
+    yield "final", {"hits": result[:pool], "info": info}
+
+
+def search(
+    query: str,
+    query_vec: list[float] | None,
+    library: ChunkLibrary,
+    strategy: str = "rrf",
+    top_k: int = 6,
+    candidates: int = 24,
+    doc_ids: list[str] | None = None,
+    rrf_k: int = 60,
+) -> tuple[list[Hit], dict]:
+    """Return ranked hits plus per-stage timings."""
+    final: tuple[list[Hit], dict] = ([], {"timings": {}, "strategy": strategy, "degraded": ""})
+    for stage, payload in search_steps(
+        query, query_vec, library, strategy, top_k, candidates, doc_ids, rrf_k
+    ):
+        if stage == "final":
+            final = (payload["hits"], payload["info"])
+    return final
 
 
 def diversify(hits: list[Hit], top_k: int) -> list[Hit]:

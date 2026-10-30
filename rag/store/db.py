@@ -35,6 +35,29 @@ class Database:
     def init(self) -> None:
         with _write_lock, self._connect() as conn:
             conn.executescript(_SCHEMA.read_text(encoding="utf-8"))
+            # CREATE TABLE IF NOT EXISTS leaves an existing database alone, so
+            # columns added later are patched in here instead of asking the user
+            # to delete their index.
+            self._add_missing_columns(
+                conn,
+                {
+                    "docs": {"format": "TEXT NOT NULL DEFAULT ''"},
+                    "queries": {
+                        "tokens_in": "INTEGER NOT NULL DEFAULT 0",
+                        "tokens_out": "INTEGER NOT NULL DEFAULT 0",
+                    },
+                },
+            )
+
+    @staticmethod
+    def _add_missing_columns(conn, wanted: dict[str, dict[str, str]]) -> None:
+        for table, columns in wanted.items():
+            existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if not existing:
+                continue
+            for name, ddl in columns.items():
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
     # ---- documents ----
 
@@ -42,12 +65,12 @@ class Database:
         with _write_lock, self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO docs (id, filename, path, pages, chars, created_at,
+                INSERT INTO docs (id, filename, path, format, pages, chars, created_at,
                                   strategy, chunk_count, dim, indexed_at, enhanced_at)
-                VALUES (:id, :filename, :path, :pages, :chars, :created_at,
+                VALUES (:id, :filename, :path, :format, :pages, :chars, :created_at,
                         :strategy, :chunk_count, :dim, :indexed_at, :enhanced_at)
                 ON CONFLICT(id) DO UPDATE SET
-                    filename=excluded.filename, path=excluded.path,
+                    filename=excluded.filename, path=excluded.path, format=excluded.format,
                     pages=excluded.pages, chars=excluded.chars,
                     strategy=excluded.strategy, chunk_count=excluded.chunk_count,
                     dim=excluded.dim, indexed_at=excluded.indexed_at,
@@ -57,6 +80,7 @@ class Database:
                     "id": meta["id"],
                     "filename": meta["filename"],
                     "path": meta["path"],
+                    "format": meta.get("format", ""),
                     "pages": int(meta.get("pages", 0)),
                     "chars": int(meta.get("chars", 0)),
                     "created_at": meta.get("created_at") or datetime.now().isoformat(timespec="seconds"),
@@ -233,11 +257,14 @@ class Database:
         strategy: str,
         rewritten: str = "",
         reranked: bool = False,
+        tokens_in: int = 0,
+        tokens_out: int = 0,
     ) -> None:
         with _write_lock, self._connect() as conn:
             conn.execute(
                 "INSERT INTO queries (created_at, question, rewritten, answer, pages, ms,"
-                " top_k, strategy, reranked) VALUES (?,?,?,?,?,?,?,?,?)",
+                " top_k, strategy, reranked, tokens_in, tokens_out)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     datetime.now().isoformat(timespec="seconds"),
                     question[:500],
@@ -248,8 +275,24 @@ class Database:
                     top_k,
                     strategy,
                     int(reranked),
+                    int(tokens_in or 0),
+                    int(tokens_out or 0),
                 ),
             )
+
+    def usage_totals(self) -> dict:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS requests,"
+                " COALESCE(SUM(tokens_in), 0) AS llm_in,"
+                " COALESCE(SUM(tokens_out), 0) AS llm_out FROM queries"
+            ).fetchone()
+        return {
+            "requests": int(row["requests"] or 0),
+            "llm_in": int(row["llm_in"] or 0),
+            "llm_out": int(row["llm_out"] or 0),
+            "embed": 0,
+        }
 
     def recent_queries(self, limit: int = 20) -> list[dict]:
         with self._connect() as conn:

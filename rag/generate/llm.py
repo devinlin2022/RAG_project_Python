@@ -86,6 +86,16 @@ def chat(
     return content.strip() or "（模型返回空内容）", data.get("usage") or {}
 
 
+def _post_stream(payload: dict, headers: dict):
+    return requests.post(
+        settings.chat_completions_url,
+        json=payload,
+        headers=headers,
+        timeout=settings.llm_timeout,
+        stream=True,
+    )
+
+
 def chat_stream(
     messages: list[dict],
     temperature: float | None = None,
@@ -100,18 +110,23 @@ def chat_stream(
         "stream": True,
         "temperature": settings.temperature if temperature is None else temperature,
         "max_tokens": settings.max_tokens if max_tokens is None else max_tokens,
+        # Without this a streamed answer reports no token usage at all, and the
+        # UI would have nothing to show in the cost panel.
+        "stream_options": {"include_usage": True},
     }
 
     try:
-        response = requests.post(
-            settings.chat_completions_url,
-            json=payload,
-            headers=headers,
-            timeout=settings.llm_timeout,
-            stream=True,
-        )
+        response = _post_stream(payload, headers)
     except requests.exceptions.RequestException as exc:
         raise LLMError(f"网络请求失败：{exc}") from exc
+
+    if response.status_code == 400:
+        # Some OpenAI-compatible gateways reject stream_options outright.
+        payload.pop("stream_options", None)
+        try:
+            response = _post_stream(payload, headers)
+        except requests.exceptions.RequestException as exc:
+            raise LLMError(f"网络请求失败：{exc}") from exc
 
     if response.status_code >= 400:
         raise _explain(response)

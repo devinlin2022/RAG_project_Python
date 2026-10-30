@@ -1,3 +1,4 @@
+# Web layer
 gradio>=5.0.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
@@ -7,20 +8,22 @@ python-multipart>=0.0.9
 requests>=2.31.0
 numpy>=1.26.0
 
-# PDF parsing
-pdfminer.six>=20231228
-pdfplumber>=0.11.0
-# Render pages to PNG for OCR
+# Parsing: PDF text + render (pypdfium2), ruled tables (pdfplumber),
+# Word (python-docx), PPT (python-pptx), Excel (openpyxl)
 pypdfium2>=4.30.0
+pdfplumber>=0.11.0
+python-docx>=1.1.0
+python-pptx>=0.6.23
+openpyxl>=3.1.0
 
 # Chinese word segmentation for BM25 (optional: falls back to character bigrams)
 jieba>=0.42.1
 
-# Public tunnel (optional, only when NGROK_ENABLED=true)
+# Public tunnel (optional, only used when NGROK_AUTHTOKEN is set)
 pyngrok>=7.0.0
 
-# Offline OCR fallback (optional, ~120 MB with onnxruntime)
-# rapidocr-onnxruntime>=1.4.0
+# Colab / notebooks: lets uvicorn run inside an existing event loop
+nest_asyncio>=1.6.0
 
 # Tests
 pytest>=8.0.0

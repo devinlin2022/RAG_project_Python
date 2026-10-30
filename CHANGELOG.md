@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.1.0 — 2026-10-30
+
+面向真实用户的可用性改造：入口收敛、格式扩展、速度与可观测性。
+
+**入口与部署**
+- 环境变量收敛为一个 Key 一个地址（`SILICONFLOW_API_KEY` / `SILICONFLOW_BASE_URL`），
+  问答、向量、精排、视觉共用；旧名 `LLM_API_KEY` / `LLM_BASE_URL` 仍然生效
+- `main.py` 重写：依赖自检、Colab/ngrok 自动切换绑定地址、隧道复用清理；
+  缺 `pyngrok` 不再启动失败
+- 界面可临时粘贴 Key（只存内存），克隆仓库没有 `.env` 也能跑
+- `check_llm.py --models` 列出当前 Key 可用的模型目录
+
+**界面**
+- 六个页签收敛为两个：「文档与分块」「提问」
+- 新增**分块可视化**：页轴 + 按字数成比例的块条形 + 类型着色；问答后命中块标红并标注引用序号
+- 新增**流水线实时视图**：改写、向量化（维度/范数）、向量检索（余弦/最高分）、BM25（分词）、
+  融合（候选数）、精排（前后分数）、生成（首字延迟/token 数）逐条显示
+- 提问模式收敛为「快速检索 / 增强检索」，检索参数不再暴露给用户
+- 会话级 token 用量与可选金额折算
+
+**格式**
+- 新增 Word / PPT / Excel / CSV / Markdown / TXT / HTML 解析（`rag/ingest/extract.py`）
+- PPT：幻灯片按页切块（不再整份塞进一个块），连接线按坐标还原成 `A -> B` 箭头关系
+- 无页码格式按 `NATIVE_PAGE_CHARS` 切虚拟页，引用、删除、评测口径保持一致
+
+**速度**
+- PDF 文本改用 pdfium（48 页 911 ms → 357 ms）
+- 表格识别只跑"看起来像表格"的页（图元数 / 列结构），不再逐页 `find_tables()`
+- 多文件并行解析（`PARSE_WORKERS`）、向量化分批并发（`EMBED_CONCURRENCY`）、
+  视觉调用并发（`OCR_CONCURRENCY`，20 页扫描件约 4 分钟 → 约 1 分钟）
+- 向量检索与 BM25 两路并行，谁先完成先报
+
+**修复**
+- `on_parse` 返回 9 个值对应 10 个组件导致界面崩溃（页面报 `didn't return enough output values`）
+- 录音式空回答：流式请求未带 `stream_options.include_usage`，token 用量永远为 0
+- 现有数据库升级时自动补齐新增列（`docs.format`、`queries.tokens_in/out`），不必删库
+
+**仓库**
+- `tools/make_demo_doc.py` 从同一份正文生成 `data/samples/` 全部 6 个文件（pdf / docx / pptx / xlsx / md / 英文 fixture），示例文件可复现而非硬塞进仓库
+
 ## v1.0.0 — 2026-10-27
 
 首个完整版：从「按页抽取 + 人工选页问答」变成可交付的 PDF 助手。

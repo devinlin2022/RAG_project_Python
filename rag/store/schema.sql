@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS docs (
     id          TEXT PRIMARY KEY,
     filename    TEXT NOT NULL,
     path        TEXT NOT NULL,
+    format      TEXT NOT NULL DEFAULT '',
     pages       INTEGER NOT NULL DEFAULT 0,
     chars       INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL,
@@ -69,5 +70,7 @@ CREATE TABLE IF NOT EXISTS queries (
     ms         INTEGER NOT NULL DEFAULT 0,
     top_k      INTEGER NOT NULL DEFAULT 0,
     strategy   TEXT NOT NULL DEFAULT '',
-    reranked   INTEGER NOT NULL DEFAULT 0
+    reranked   INTEGER NOT NULL DEFAULT 0,
+    tokens_in  INTEGER NOT NULL DEFAULT 0,
+    tokens_out INTEGER NOT NULL DEFAULT 0
 );

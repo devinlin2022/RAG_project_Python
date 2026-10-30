@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from rag.config import settings
 from rag.index.bm25 import BM25
 from rag.index.dense import FlatIndex
 from rag.index.tokenize import tokenize
@@ -32,6 +33,11 @@ class Record:
     level: int = 0
     tokens: list[str] = field(default_factory=list)
     vec: np.ndarray | None = None
+
+    @property
+    def chars(self) -> int:
+        """Same surface as `Chunk`, so one renderer can draw either."""
+        return len(self.text)
 
     @property
     def page_label(self) -> str:
@@ -123,6 +129,10 @@ class ChunkLibrary:
             self._rebuild()
 
     # ---- search ----
+
+    @property
+    def embed_model(self) -> str:
+        return settings.embed_model
 
     def _mask(self, doc_ids: list[str] | None) -> np.ndarray | None:
         if not doc_ids:

@@ -47,6 +47,8 @@ class AskRequest(BaseModel):
     strategy: str = "rrf"
     rerank: bool | None = None
     history: list[dict] = Field(default_factory=list)
+    # "fast" (BM25 + vector + RRF) or "enhanced" (adds rewrite + rerank)
+    mode: str | None = None
 
 
 class RetrieveRequest(BaseModel):
@@ -254,6 +256,7 @@ def run_chunk(payload: ChunkRequest) -> dict:
         pages=doc["page_count"],
         table_pages=len(doc["table_like_pages"]),
         figure_pages=len(doc["figure_like_pages"]),
+        slide_deck=(doc.get("format") == "PPT"),
     )
     return {
         "doc_id": doc["id"],
@@ -304,6 +307,7 @@ def ask(payload: AskRequest) -> dict:
             strategy=payload.strategy,
             rerank=payload.rerank,
             history=payload.history,
+            mode=payload.mode,
         )
     except ServiceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -311,7 +315,11 @@ def ask(payload: AskRequest) -> dict:
 
 @router.post("/ask/stream", dependencies=[Depends(rate_limit)])
 def ask_stream(request: Request, payload: AskRequest) -> StreamingResponse:
-    """Server-sent events: one JSON object per event, stages prepared/delta/done/error."""
+    """Server-sent events, one JSON object per pipeline step.
+
+    Stages: rewrite_* / embed_* / dense_* / sparse_* / fuse_done / rerank_* /
+    retrieved / delta / done / error. The UI renders them as a live trace.
+    """
 
     def events():
         try:
@@ -322,9 +330,8 @@ def ask_stream(request: Request, payload: AskRequest) -> StreamingResponse:
                 strategy=payload.strategy,
                 rerank=payload.rerank,
                 history=payload.history,
+                mode=payload.mode,
             ):
-                if event["stage"] == "prepared":
-                    event = {**event, "stage": "prepared"}
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except ServiceError as exc:
             yield f"data: {json.dumps({'stage': 'error', 'error': str(exc)}, ensure_ascii=False)}\n\n"

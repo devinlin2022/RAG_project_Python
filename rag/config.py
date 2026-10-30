@@ -1,7 +1,13 @@
-"""Configuration loaded from .env and validated at import time."""
+"""Configuration loaded from .env and validated at import time.
+
+One credential, one base URL: every SiliconFlow capability (chat, embedding,
+rerank, vision) reads the same key unless you deliberately override it. That is
+the whole point of this module -- a user should only have to paste one key.
+"""
 
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from rag import __version__
@@ -9,79 +15,122 @@ from rag import __version__
 BASE_DIR = Path(__file__).resolve().parents[1]
 VERSION = __version__
 
+DEFAULT_BASE_URL = "https://api.siliconflow.cn/v1"
+DEFAULT_LLM = "deepseek-ai/DeepSeek-V3.2"
+DEFAULT_EMBED = "BAAI/bge-m3"
+DEFAULT_RERANK = "BAAI/bge-reranker-v2-m3"
+DEFAULT_VISION = "Qwen/Qwen3-VL-32B-Instruct"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(BASE_DIR / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
-    # LLM (OpenAI-compatible)
-    llm_base_url: str = "https://api.siliconflow.cn/v1"
-    llm_api_key: str = ""
-    llm_model: str = "deepseek-ai/DeepSeek-V3"
+    # ── one entry for every capability ───────────────────────────────
+    # SILICONFLOW_API_KEY / SILICONFLOW_BASE_URL are the documented names;
+    # the LLM_* names are kept so an older .env keeps working.
+    llm_api_key: str = Field(
+        "",
+        validation_alias=AliasChoices("SILICONFLOW_API_KEY", "LLM_API_KEY", "llm_api_key"),
+    )
+    llm_base_url: str = Field(
+        DEFAULT_BASE_URL,
+        validation_alias=AliasChoices("SILICONFLOW_BASE_URL", "LLM_BASE_URL", "llm_base_url"),
+    )
+
+    # ── models: one id per capability, all on the same platform ─────
+    llm_model: str = Field(
+        DEFAULT_LLM,
+        validation_alias=AliasChoices("LLM_MODEL", "SILICONFLOW_MODEL_NAME", "llm_model"),
+    )
+    embed_model: str = Field(
+        DEFAULT_EMBED, validation_alias=AliasChoices("EMBED_MODEL", "embed_model")
+    )
+    rerank_model: str = Field(
+        DEFAULT_RERANK, validation_alias=AliasChoices("RERANK_MODEL", "rerank_model")
+    )
+    # OCR is a prompt over the vision model, not a separate service.
+    vision_model: str = Field(
+        DEFAULT_VISION,
+        validation_alias=AliasChoices("VISION_MODEL", "OCR_MODEL", "vision_model"),
+    )
+
     temperature: float = 0.2
     max_tokens: int = 1024
     llm_timeout: int = 90
 
-    # PDF parsing
+    # ── parsing ─────────────────────────────────────────────────────
     scan_page_char_threshold: int = 200
     table_column_ratio: float = 0.4
     max_context_chars: int = 12000
     # Below this many chars a page dense in vector shapes is treated as a diagram
     figure_text_max: int = 1500
+    # Parsers that have no real pages (docx / md / xlsx) are cut into virtual
+    # pages of this size so citations, deletion and evaluation still work.
+    native_page_chars: int = 1800
+    # Files parsed in parallel during one upload
+    parse_workers: int = 4
+    # pdfplumber's ruled-table pass is the slowest part of ingest; only pages
+    # that already look tabular are scanned, up to this many.
+    table_scan_max_pages: int = 40
 
-    # Public tunnel (optional)
+    # ── public tunnel ───────────────────────────────────────────────
     ngrok_enabled: bool = False
     ngrok_authtoken: str = ""
 
-    # OCR / figure recognition. Reuses the chat key by default.
+    # ── vision rails (OCR / figure caption) ─────────────────────────
     ocr_enabled: bool = False
     ocr_base_url: str = ""
     ocr_api_key: str = ""
-    ocr_model: str = "Qwen/Qwen3-VL-32B-Instruct"
-    vision_model: str = "Qwen/Qwen3-VL-32B-Instruct"
     ocr_render_dpi: int = 150
     ocr_max_pages: int = 20
     ocr_timeout: int = 120
-    ocr_min_interval: float = 1.5
+    # Concurrent vision calls. 1 restores the old serial behaviour.
+    ocr_concurrency: int = 3
+    ocr_min_interval: float = 0.0
     http_retries: int = 3
-    enhance_max_seconds: int = 120
+    enhance_max_seconds: int = 600
 
-    # Embeddings (semantic chunking). bge-m3 is free on SiliconFlow.
+    # ── embeddings ──────────────────────────────────────────────────
     embed_base_url: str = ""
     embed_api_key: str = ""
-    embed_model: str = "BAAI/bge-m3"
     embed_batch: int = 32
+    # Batches sent in parallel while indexing a document
+    embed_concurrency: int = 3
 
-    # Chunking
+    # ── chunking ────────────────────────────────────────────────────
     chunk_strategy: str = "auto"
     chunk_size: int = 500
     chunk_overlap: int = 80
     chunk_min_chars: int = 120
     semantic_percentile: float = 85.0
 
-    # Retrieval (V3)
+    # ── retrieval ───────────────────────────────────────────────────
     retrieve_top_k: int = 6
     rerank_candidates: int = 24
     rrf_k: int = 60
     retrieve_strategy: str = "rrf"  # dense | sparse | rrf
     rerank_enabled: bool = True
-    rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_timeout: int = 60
-    # Below this cross-encoder score a hit is treated as irrelevant
     rerank_floor: float = 0.0
 
-    # Multi-turn and streaming (V4)
+    # ── multi-turn and streaming ────────────────────────────────────
     history_turns: int = 3
     rewrite_enabled: bool = True
 
-    # Storage (V5)
+    # ── storage ─────────────────────────────────────────────────────
     db_filename: str = "rag.sqlite"
     max_upload_mb: int = 60
 
-    # Hardening (V7)
+    # ── cost display (0 = hide the money line) ──────────────────────
+    price_in_per_m: float = 0.0
+    price_out_per_m: float = 0.0
+
+    # ── hardening ───────────────────────────────────────────────────
     app_host: str = "127.0.0.1"
     app_port: int = 7860
     app_api_key: str = ""
@@ -89,6 +138,8 @@ class Settings(BaseSettings):
     ui_password: str = ""
     rate_limit_per_min: int = 30
     log_json: bool = True
+
+    # ── paths ───────────────────────────────────────────────────────
 
     @property
     def upload_dir(self) -> Path:
@@ -102,32 +153,54 @@ class Settings(BaseSettings):
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
-    @property
-    def rerank_ready(self) -> bool:
-        return self.rerank_enabled and bool(self.llm_api_key.strip())
+    # ── capability gates ────────────────────────────────────────────
 
     @property
-    def rerank_url(self) -> str:
-        return self.llm_base_url.rstrip("/") + "/rerank"
+    def api_key(self) -> str:
+        return self.llm_api_key.strip()
 
     @property
-    def ui_auth(self) -> tuple[str, str] | None:
-        """Gradio login, enabled only when a password is configured."""
-        return (self.ui_username, self.ui_password) if self.ui_password.strip() else None
+    def ocr_model(self) -> str:
+        return self.vision_model
 
     @property
     def llm_configured(self) -> bool:
-        return bool(self.llm_api_key.strip())
+        return bool(self.api_key)
+
+    @property
+    def rerank_ready(self) -> bool:
+        return self.rerank_enabled and self.llm_configured
+
+    @property
+    def embed_ready(self) -> bool:
+        return bool(self.embed_api_key_resolved)
+
+    @property
+    def ocr_ready(self) -> bool:
+        return self.ocr_enabled and bool(self.ocr_api_key_resolved)
+
+    # ── URLs ────────────────────────────────────────────────────────
+
+    @property
+    def llm_url(self) -> str:
+        return self.llm_base_url.rstrip("/")
 
     @property
     def chat_completions_url(self) -> str:
-        return self.llm_base_url.rstrip("/") + "/chat/completions"
+        return self.llm_url + "/chat/completions"
 
     @property
     def models_url(self) -> str:
-        return self.llm_base_url.rstrip("/") + "/models"
+        return self.llm_url + "/models"
 
-    # OCR and embeddings fall back to the chat key so one .env is enough.
+    @property
+    def rerank_url(self) -> str:
+        return self.llm_url + "/rerank"
+
+    @property
+    def embed_url(self) -> str:
+        return self.embed_base_url_resolved + "/embeddings"
+
     @property
     def ocr_base_url_resolved(self) -> str:
         return (self.ocr_base_url or self.llm_base_url).rstrip("/")
@@ -135,10 +208,6 @@ class Settings(BaseSettings):
     @property
     def ocr_api_key_resolved(self) -> str:
         return (self.ocr_api_key or self.llm_api_key).strip()
-
-    @property
-    def ocr_ready(self) -> bool:
-        return self.ocr_enabled and bool(self.ocr_api_key_resolved)
 
     @property
     def embed_base_url_resolved(self) -> str:
@@ -149,8 +218,9 @@ class Settings(BaseSettings):
         return (self.embed_api_key or self.llm_api_key).strip()
 
     @property
-    def embed_ready(self) -> bool:
-        return bool(self.embed_api_key_resolved)
+    def ui_auth(self) -> tuple[str, str] | None:
+        """Gradio login, enabled only when a password is configured."""
+        return (self.ui_username, self.ui_password) if self.ui_password.strip() else None
 
 
 settings = Settings()

@@ -2,24 +2,29 @@
 
 Both the Gradio UI and the HTTP API call this module. Nothing here knows about
 either transport, which is what keeps one process and one index state.
+
+The answering path is a generator from the first rewrite to the last token, so
+the UI can show what the pipeline is doing instead of a spinner.
 """
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
 from rag.chunk.registry import chunk_document
 from rag.config import VERSION, settings
+from rag.embed import client as embed_client
 from rag.embed.client import EmbedError, embed_texts
 from rag.generate.llm import LLMError, chat, chat_stream
 from rag.generate.prompt import NO_CONTEXT_ANSWER, build_chunk_messages
-from rag.generate.rewrite import rewrite_question
+from rag.generate.rewrite import needs_rewrite, rewrite_question
 from rag.index.library import ChunkLibrary
 from rag.ingest.enhance import Block, all_blocks, enhance
 from rag.ingest.loader import load_document, sha256_file
 from rag.retrieve import reranker
-from rag.retrieve.retriever import Hit, diversify, rerank_hits, search
+from rag.retrieve.retriever import Hit, diversify, rerank_hits, search, search_steps
 from rag.store.db import Database
 
 log = logging.getLogger(__name__)
@@ -28,6 +33,27 @@ STRATEGY_LABELS = {
     "rrf": "RRF 融合",
     "dense": "向量",
     "sparse": "BM25",
+}
+
+# Two user-facing modes, so nobody has to understand RRF before asking a question.
+# `fast` is the cheap default; `enhanced` pays for rewrite + rerank + a wider pool.
+MODES = {
+    "fast": {
+        "label": "快速检索",
+        "strategy": "rrf",
+        "top_k": 5,
+        "candidates": 18,
+        "rerank": False,
+        "rewrite": False,
+    },
+    "enhanced": {
+        "label": "增强检索",
+        "strategy": "rrf",
+        "top_k": 8,
+        "candidates": 36,
+        "rerank": True,
+        "rewrite": True,
+    },
 }
 
 
@@ -43,12 +69,20 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _norm(vector) -> float:
+    if vector is None:
+        return 0.0
+    total = sum(float(value) * float(value) for value in vector) ** 0.5
+    return round(total, 3)
+
+
 class Service:
     def __init__(self, db: Database | None = None) -> None:
         self.db = db or Database(settings.db_path)
         self.library = ChunkLibrary(self.db)
         self.docs: dict[str, dict] = {}
         self.started_at = _now()
+        self.usage = self.db.usage_totals()
         self._load_docs()
 
     # ---------- documents ----------
@@ -63,6 +97,7 @@ class Service:
                 "id": meta["id"],
                 "filename": meta["filename"],
                 "path": meta["path"],
+                "format": meta.get("format") or "",
                 "pages": pages,
                 "page_count": len(pages),
                 "chars": sum(p["chars"] for p in pages),
@@ -87,6 +122,7 @@ class Service:
             "id": doc["id"],
             "filename": doc["filename"],
             "path": doc["path"],
+            "format": doc.get("format") or "",
             "pages": doc["page_count"],
             "chars": doc["chars"],
             "created_at": doc.get("created_at") or _now(),
@@ -98,7 +134,7 @@ class Service:
         }
 
     def ingest(self, path: str | Path, filename: str | None = None) -> tuple[dict, bool]:
-        """Parse and persist a PDF. Returns (doc, was_already_present)."""
+        """Parse and persist one file. Returns (doc, was_already_present)."""
         path = Path(path)
         doc_id = sha256_file(path)[:16]
         if doc_id in self.docs:
@@ -109,12 +145,58 @@ class Service:
         self.db.upsert_doc(self._meta(doc))
         self.db.save_pages(doc_id, doc["pages"])
         self.docs[doc_id] = doc
-        log.info("ingest doc=%s pages=%d chars=%d", doc_id, doc["page_count"], doc["chars"])
+        log.info(
+            "ingest doc=%s format=%s pages=%d chars=%d",
+            doc_id,
+            doc.get("format", ""),
+            doc["page_count"],
+            doc["chars"],
+        )
         return doc, False
+
+    def ingest_files(self, paths: list[str], on_event=None) -> list[dict]:
+        """Parse several uploads in parallel, then report in input order.
+
+        Parsing is CPU-bound per file but the files are independent, so the wall
+        clock drops with the number of files rather than their total size.
+        """
+        emit = on_event or (lambda event: None)
+        results: list[dict] = [{} for _ in paths]
+
+        def task(index: int, path: str) -> None:
+            name = Path(path).name
+            started = time.perf_counter()
+            try:
+                doc, existed = self.ingest(path, name)
+                results[index] = {
+                    "ok": True,
+                    "existed": existed,
+                    "doc": doc,
+                    "filename": name,
+                    "ms": int(_ms(started)),
+                }
+            except Exception as exc:  # one bad file must not stop the batch
+                results[index] = {"ok": False, "filename": name, "error": str(exc), "ms": int(_ms(started))}
+            emit({"stage": "file_done", "filename": name, "ok": results[index]["ok"]})
+
+        workers = max(1, min(int(settings.parse_workers), len(paths) or 1))
+        if workers == 1:
+            for index, path in enumerate(paths):
+                emit({"stage": "file_start", "filename": Path(path).name})
+                task(index, path)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {}
+                for index, path in enumerate(paths):
+                    emit({"stage": "file_start", "filename": Path(path).name})
+                    futures[pool.submit(task, index, path)] = index
+                for future in futures:
+                    future.result()
+        return results
 
     def get(self, doc_id: str | None) -> dict:
         if not doc_id or doc_id not in self.docs:
-            raise ServiceError("文档不存在，请先上传并解析 PDF")
+            raise ServiceError("文档不存在，请先上传并解析文件")
         return self.docs[doc_id]
 
     def list_documents(self) -> list[dict]:
@@ -124,6 +206,7 @@ class Service:
                 {
                     "id": doc["id"],
                     "filename": doc["filename"],
+                    "format": doc.get("format") or "—",
                     "pages": doc["page_count"],
                     "chars": doc["chars"],
                     "chunks": doc.get("chunk_count", 0),
@@ -204,6 +287,7 @@ class Service:
             pages=doc["page_count"],
             table_pages=len(doc["table_like_pages"]),
             figure_pages=len(doc["figure_like_pages"]),
+            slide_deck=(doc.get("format") == "PPT"),
         )
         chunks = result["chunks"]
         if not chunks:
@@ -233,6 +317,8 @@ class Service:
         doc["dim"] = dim
         doc["indexed_at"] = _now()
         self.db.upsert_doc(self._meta(doc))
+        if vectors:
+            self._add_usage(embed_tokens=embed_client.last_usage.get("prompt_tokens", 0))
 
         return {
             "doc_id": doc_id,
@@ -249,6 +335,27 @@ class Service:
     def index_all(self, force: bool = False) -> list[dict]:
         return [self.index(doc_id, force=force) for doc_id in list(self.docs)]
 
+    # ---------- usage ----------
+
+    def _add_usage(self, llm_in: int = 0, llm_out: int = 0, embed_tokens: int = 0) -> None:
+        self.usage["llm_in"] = self.usage.get("llm_in", 0) + int(llm_in or 0)
+        self.usage["llm_out"] = self.usage.get("llm_out", 0) + int(llm_out or 0)
+        self.usage["embed"] = self.usage.get("embed", 0) + int(embed_tokens or 0)
+        self.usage["requests"] = self.usage.get("requests", 0) + 1
+
+    def usage_summary(self) -> dict:
+        total = self.usage.get("llm_in", 0) + self.usage.get("llm_out", 0)
+        cost = (
+            self.usage.get("llm_in", 0) / 1_000_000 * settings.price_in_per_m
+            + self.usage.get("llm_out", 0) / 1_000_000 * settings.price_out_per_m
+        )
+        return {
+            **self.usage,
+            "total_tokens": total,
+            "cost": round(cost, 4),
+            "priced": bool(settings.price_in_per_m or settings.price_out_per_m),
+        }
+
     # ---------- retrieval ----------
 
     def _embed_query(self, query: str) -> tuple[list[float] | None, float, str]:
@@ -259,6 +366,9 @@ class Service:
             return embed_texts([query])[0], _ms(started), ""
         except EmbedError as exc:
             return None, _ms(started), str(exc)
+
+    def _reranker(self):
+        return reranker.rerank if settings.rerank_ready else None
 
     def retrieve(
         self,
@@ -337,6 +447,167 @@ class Service:
 
     # ---------- answering ----------
 
+    def resolve_mode(self, mode: str | None) -> dict:
+        if not mode or mode not in MODES:
+            return {
+                "name": "custom",
+                "label": "自定义",
+                "strategy": settings.retrieve_strategy,
+                "top_k": settings.retrieve_top_k,
+                "candidates": settings.rerank_candidates,
+                "rerank": settings.rerank_enabled,
+                "rewrite": settings.rewrite_enabled,
+            }
+        return {"name": mode, **MODES[mode]}
+
+    def prepare_steps(
+        self,
+        question: str,
+        doc_ids: list[str] | None = None,
+        top_k: int | None = None,
+        strategy: str | None = None,
+        rerank: bool | None = None,
+        history: list[dict] | None = None,
+        mode: str | None = None,
+        rewrite: bool | None = None,
+    ):
+        """Yield pipeline events, then ("prepared", payload).
+
+        Every event carries the number the UI needs -- dimension, norm, hit
+        count, elapsed -- because "thinking" without evidence is theatre.
+        """
+        plan = self.resolve_mode(mode)
+        if not (question or "").strip():
+            raise ServiceError("问题不能为空")
+        top_k = top_k or plan["top_k"]
+        strategy = strategy or plan["strategy"]
+        # A rewrite is only worth a round trip when the question actually points
+        # back at something ("那它呢"); `rewrite_question` itself no-ops without
+        # a key, so the branch stays cheap when unconfigured.
+        want_rewrite = plan["rewrite"] if rewrite is None else rewrite
+        want_rerank = plan["rerank"] if rerank is None else rerank
+
+        started_all = time.perf_counter()
+
+        # 1. rewrite
+        query = question.strip()
+        rewritten, was_rewritten, rewrite_error = query, False, ""
+        if want_rewrite and needs_rewrite(query, history):
+            yield {"stage": "rewrite_start", "question": query}
+            rewrite_started = time.perf_counter()
+            rewritten, was_rewritten, rewrite_error = rewrite_question(
+                question,
+                history,
+                chat,
+                turns=settings.history_turns,
+                enabled=settings.llm_configured,
+            )
+            yield {
+                "stage": "rewrite_done",
+                "query": rewritten,
+                "rewritten": was_rewritten,
+                "ms": _ms(rewrite_started),
+                "error": rewrite_error,
+                "skipped": not settings.llm_configured,
+            }
+        rewrite_ms = _ms(started_all) if want_rewrite else 0.0
+
+        # 2. embed the query
+        yield {
+            "stage": "embed_start",
+            "model": settings.embed_model,
+            "ready": settings.embed_ready and bool(len(self.library.dense)),
+        }
+        vector, embed_ms, embed_error = self._embed_query(rewritten)
+        if embed_error:
+            yield {"stage": "embed_done", "error": embed_error, "ms": embed_ms}
+        else:
+            yield {
+                "stage": "embed_done",
+                "ms": embed_ms,
+                "dim": len(vector) if vector else 0,
+                "norm": _norm(vector),
+                "tokens": embed_client.last_usage.get("prompt_tokens", 0),
+                "skipped": vector is None,
+            }
+
+        # 3. the two rails, then fusion
+        hits: list[Hit] = []
+        info: dict = {"timings": {}, "strategy": strategy, "degraded": ""}
+        for stage, payload in search_steps(
+            rewritten,
+            vector,
+            self.library,
+            strategy=strategy,
+            top_k=top_k,
+            candidates=max(plan["candidates"], top_k),
+            doc_ids=doc_ids,
+            rrf_k=settings.rrf_k,
+        ):
+            if stage == "final":
+                hits, info = payload["hits"], payload["info"]
+                continue
+            yield {"stage": stage, **payload}
+
+        candidates = len(hits)
+
+        # 4. rerank
+        rerank_info = {"used": False, "model": "", "ms": 0.0, "error": ""}
+        if want_rerank and settings.rerank_ready and hits:
+            yield {"stage": "rerank_start", "candidates": len(hits), "model": settings.rerank_model}
+            hits, rerank_info = rerank_hits(rewritten, hits, len(hits), reranker.rerank)
+            rerank_info["model"] = settings.rerank_model
+            yield {
+                "stage": "rerank_done",
+                "ms": rerank_info["ms"],
+                "used": rerank_info["used"],
+                "error": rerank_info["error"],
+                "top": [
+                    {
+                        "filename": hit.record.filename,
+                        "page": hit.record.page_from,
+                        "score": round(hit.rerank or 0, 3),
+                    }
+                    for hit in hits[:3]
+                ],
+            }
+        elif want_rerank and not settings.rerank_ready:
+            yield {"stage": "rerank_skipped", "reason": "未配置 Key 或已关闭精排"}
+
+        hits = diversify(hits, top_k)
+        retrieve_ms = _ms(started_all)
+
+        payload = {
+            "question": question.strip(),
+            "query": rewritten,
+            "rewritten": was_rewritten,
+            "rewrite_error": rewrite_error,
+            "hits": hits,
+            "timings": {
+                "rewrite_ms": rewrite_ms,
+                "embed_ms": embed_ms,
+                "retrieve_ms": retrieve_ms,
+                **info["timings"],
+                "rerank_ms": rerank_info["ms"],
+            },
+            "rerank": rerank_info,
+            "degraded": info.get("degraded", ""),
+            "embed_error": embed_error,
+            "candidates": candidates,
+            "strategy": info["strategy"],
+            "mode": plan,
+        }
+        yield {
+            "stage": "retrieved",
+            "sources": [_source_dict(hit, number) for number, hit in enumerate(hits, 1)],
+            "timings": payload["timings"],
+            "candidates": candidates,
+            "strategy": info["strategy"],
+            "degraded": payload["degraded"],
+            "rerank": rerank_info,
+        }
+        yield "prepared", payload
+
     def _prepare(
         self,
         question: str,
@@ -345,40 +616,24 @@ class Service:
         strategy: str | None,
         rerank: bool | None,
         history: list[dict] | None,
+        mode: str | None = None,
+        rewrite: bool | None = None,
     ) -> dict:
-        started = time.perf_counter()
-        rewritten, was_rewritten, rewrite_error = rewrite_question(
-            question,
-            history,
-            chat,
-            turns=settings.history_turns,
-            enabled=settings.rewrite_enabled and settings.llm_configured,
-        )
-        rewrite_ms = _ms(started)
-
-        result = self.retrieve(rewritten, doc_ids, top_k=top_k, strategy=strategy, rerank=rerank)
-        # retrieve_ms already covers embedding + both rails + fusion + rerank, so
-        # the stage values below are components, not siblings to be summed.
-        timings = {"rewrite_ms": rewrite_ms, **result["timings"]}
-        return {
-            "question": question.strip(),
-            "query": rewritten,
-            "rewritten": was_rewritten,
-            "rewrite_error": rewrite_error,
-            "hits": result["hits"],
-            "timings": timings,
-            "rerank": result["rerank"],
-            "degraded": result["degraded"],
-            "embed_error": result["embed_error"],
-            "candidates": result["candidates"],
-            "strategy": result["strategy"],
-        }
+        prepared: dict = {}
+        for event in self.prepare_steps(
+            question, doc_ids, top_k, strategy, rerank, history, mode, rewrite
+        ):
+            if isinstance(event, tuple) and event[0] == "prepared":
+                prepared = event[1]
+        return prepared
 
     def _finish(self, prepared: dict, answer: str, usage: dict, generate_ms: float) -> dict:
         hits = prepared["hits"]
         from eval.metrics import citation_grounding, is_abstain
 
         valid, total = citation_grounding(answer, len(hits))
+        tokens_in = int((usage or {}).get("prompt_tokens") or 0)
+        tokens_out = int((usage or {}).get("completion_tokens") or 0)
         payload = {
             "answer": answer,
             "question": prepared["question"],
@@ -397,14 +652,22 @@ class Service:
                 ),
             },
             "strategy": prepared["strategy"],
+            "mode": prepared.get("mode", {}),
+            "candidates": prepared.get("candidates", len(hits)),
             "rerank": prepared["rerank"],
             "degraded": prepared["degraded"],
             "embed_error": prepared["embed_error"],
             "abstained": is_abstain(answer),
             "citations": {"valid": valid, "total": total},
-            "usage": usage,
+            "usage": {
+                "prompt_tokens": tokens_in,
+                "completion_tokens": tokens_out,
+                "total_tokens": tokens_in + tokens_out,
+            },
             "model": settings.llm_model,
         }
+        self._add_usage(llm_in=tokens_in, llm_out=tokens_out)
+        payload["usage"]["session"] = self.usage_summary()
         self.db.log_query(
             question=prepared["question"],
             answer=answer,
@@ -414,6 +677,8 @@ class Service:
             strategy=prepared["strategy"],
             rewritten=prepared["query"] if prepared["rewritten"] else "",
             reranked=bool(prepared["rerank"]["used"]),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
         )
         return payload
 
@@ -425,8 +690,9 @@ class Service:
         strategy: str | None = None,
         rerank: bool | None = None,
         history: list[dict] | None = None,
+        mode: str | None = None,
     ) -> dict:
-        prepared = self._prepare(question, doc_ids, top_k, strategy, rerank, history)
+        prepared = self._prepare(question, doc_ids, top_k, strategy, rerank, history, mode)
         started = time.perf_counter()
 
         if not prepared["hits"]:
@@ -449,20 +715,19 @@ class Service:
         strategy: str | None = None,
         rerank: bool | None = None,
         history: list[dict] | None = None,
+        mode: str | None = None,
     ):
-        """Yield events: prepared / delta / done / error."""
-        prepared = self._prepare(question, doc_ids, top_k, strategy, rerank, history)
-        yield {
-            "stage": "prepared",
-            "query": prepared["query"],
-            "rewritten": prepared["rewritten"],
-            "sources": [_source_dict(hit, number) for number, hit in enumerate(prepared["hits"], 1)],
-            "timings": prepared["timings"],
-            "rerank": prepared["rerank"],
-            "degraded": prepared["degraded"],
-        }
+        """Yield events: pipeline stages, then delta / done / error."""
+        prepared: dict = {}
+        for event in self.prepare_steps(
+            question, doc_ids, top_k, strategy, rerank, history, mode, rewrite=None
+        ):
+            if isinstance(event, tuple):
+                prepared = event[1]
+                continue
+            yield event
 
-        if not prepared["hits"]:
+        if not prepared.get("hits"):
             yield {"stage": "delta", "text": NO_CONTEXT_ANSWER}
             yield {"stage": "done", "result": self._finish(prepared, NO_CONTEXT_ANSWER, {}, 0.0)}
             return
@@ -485,8 +750,13 @@ class Service:
             return
 
         answer = "".join(parts).strip() or "（模型返回空内容）"
-        result = self._finish(prepared, answer, usage, _ms(started))
+        generate_ms = _ms(started)
+        result = self._finish(prepared, answer, usage, generate_ms)
         result["timings"]["ttft_ms"] = ttft or 0.0
+        if generate_ms and result["usage"]["completion_tokens"]:
+            result["usage"]["tokens_per_second"] = round(
+                result["usage"]["completion_tokens"] / (generate_ms / 1000), 1
+            )
         yield {"stage": "done", "result": result}
 
     # ---------- evaluation ----------
@@ -534,6 +804,8 @@ class Service:
             "embedding": {
                 "model": settings.embed_model,
                 "configured": settings.embed_ready,
+                "batch": settings.embed_batch,
+                "concurrency": settings.embed_concurrency,
             },
             "rerank": {
                 "model": settings.rerank_model,
@@ -544,6 +816,7 @@ class Service:
                 "enabled": settings.ocr_enabled,
                 "model": settings.ocr_model,
                 "vision_model": settings.vision_model,
+                "concurrency": settings.ocr_concurrency,
             },
             "retrieval": {
                 "strategy": settings.retrieve_strategy,
@@ -559,6 +832,7 @@ class Service:
             },
             "index": self.library.stats(),
             "db": self.db.stats(),
+            "usage": self.usage_summary(),
             "security": {
                 "api_key_required": bool(settings.app_api_key),
                 "ui_login": bool(settings.ui_password),

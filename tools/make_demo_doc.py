@@ -1,9 +1,21 @@
-"""Rebuild the two sample PDFs: the Chinese demo document and the English fixture.
+"""Rebuild every file under `data/samples/` from one shared body of text.
 
-    python tools/make_demo_doc.py     # needs reportlab; the service does not
+    python tools/make_demo_doc.py     # dev-only: reportlab, python-docx,
+                                      # python-pptx, openpyxl
+
+Outputs, all generated from the same CHAPTERS / FLOW / APPROVAL data so the
+formats stay comparable:
+
+    demo-policy.pdf   8 pages   chapters, a ruled table, a vector flow chart
+    sample-3pages.pdf 3 pages   English fixture: prose / pipe table / blank
+    demo.docx         1 page    headings, paragraphs, a real Word table
+    demo.pptx         4 slides  a flow slide with arrows, a matrix slide
+    demo.xlsx         2 sheets  the approval matrix and the process steps
+    demo.md           1 file    the same chapters as markdown
 
 The content is invented and organisation-neutral on purpose: the repository is a
-generic PDF assistant, so no real policy or third-party material ships with it.
+generic document assistant, so no real policy or third-party material ships with
+it. Every file here can be regenerated, so the binaries are reproducible.
 """
 
 from pathlib import Path
@@ -268,6 +280,174 @@ def build_fixture(path: Path | None = None) -> Path:
     return path
 
 
+SAMPLES = OUT.parent
+
+
+def build_docx(path: Path | None = None) -> Path:
+    """Word version: chapters as Heading 1, clauses as bold paras, a real table.
+
+    One heading level only -- deeper headings make the hybrid chunker emit one
+    chunk per clause, which is not what a sample document should demonstrate.
+    """
+    from docx import Document
+
+    path = path or SAMPLES / "demo.docx"
+    doc = Document()
+    doc.add_heading(TITLE, level=0)
+    doc.add_paragraph(SUBTITLE)
+    doc.add_paragraph("版本 v1.0　发布 2026-03-01　文档编号 DEMO-PROC-001")
+
+    for chapter, clauses in CHAPTERS:
+        doc.add_heading(chapter, level=1)
+        for no, name, text in clauses:
+            paragraph = doc.add_paragraph()
+            paragraph.add_run(f"{no}　{name}").bold = True
+            doc.add_paragraph(text)
+        if chapter.startswith("第三章"):
+            doc.add_heading("审批权限矩阵", level=2)
+            table = doc.add_table(rows=len(APPROVAL), cols=len(APPROVAL[0]))
+            table.style = "Table Grid"
+            for r, row in enumerate(APPROVAL):
+                for c, cell in enumerate(row):
+                    table.cell(r, c).text = cell
+    doc.save(path)
+    return path
+
+
+def build_pptx(path: Path | None = None) -> Path:
+    """Slide version: a cover, a flow slide with real connectors, a matrix.
+
+    The arrows are `add_connector` shapes on purpose -- `_pptx_edges` in
+    `rag/ingest/extract.py` reads them back as `A -> B`, which is the whole
+    reason a deck answers "what happens after approval".
+    """
+    from pptx import Presentation
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
+    from pptx.util import Emu, Inches, Pt
+
+    path = path or SAMPLES / "demo.pptx"
+    deck = Presentation()
+    deck.slide_width, deck.slide_height = Inches(10), Inches(7.5)
+
+    cover = deck.slides.add_slide(deck.slide_layouts[0])
+    cover.shapes.title.text = TITLE
+    cover.placeholders[1].text = SUBTITLE
+
+    flow = deck.slides.add_slide(deck.slide_layouts[5])
+    flow.shapes.title.text = "采购流程示意"
+    box_w, box_h, gap = Inches(1.5), Inches(0.9), Inches(0.9)
+    left0, top0, row_gap = Inches(0.62), Inches(1.85), Inches(1.9)
+    boxes = []
+    for index, label in enumerate(FLOW):
+        row, col = divmod(index, 4)
+        box = flow.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Emu(int(left0 + col * (box_w + gap))),
+            Emu(int(top0 + row * row_gap)),
+            box_w,
+            box_h,
+        )
+        box.text_frame.text = label
+        box.text_frame.paragraphs[0].runs[0].font.size = Pt(12)
+        boxes.append(box)
+
+    for index, (source, target) in enumerate(zip(boxes, boxes[1:])):
+        wraps = index == 3
+        start_x = source.left + (source.width if not wraps else source.width // 2)
+        start_y = source.top + (source.height // 2 if not wraps else source.height)
+        end_x = target.left + (0 if not wraps else target.width // 2)
+        end_y = target.top + target.height // 2
+        connector = flow.shapes.add_connector(
+            MSO_CONNECTOR.ELBOW if wraps else MSO_CONNECTOR.STRAIGHT,
+            Emu(int(start_x)),
+            Emu(int(start_y)),
+            Emu(int(end_x)),
+            Emu(int(end_y)),
+        )
+        connector.line.color.rgb = RGBColor(0x55, 0x6B, 0x8C)
+        connector.line.width = Pt(1.5)
+        connector.line.fill.solid()
+
+    matrix = deck.slides.add_slide(deck.slide_layouts[5])
+    matrix.shapes.title.text = "审批权限矩阵"
+    rows, cols = len(APPROVAL), len(APPROVAL[0])
+    table = matrix.shapes.add_table(
+        rows, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(3.4)
+    ).table
+    for r, row in enumerate(APPROVAL):
+        for c, cell in enumerate(row):
+            table.cell(r, c).text = cell
+
+    controls = deck.slides.add_slide(deck.slide_layouts[1])
+    controls.shapes.title.text = "三个关键控制点"
+    frame = controls.placeholders[1].text_frame
+    frame.text = "预算校验：无预算或超预算先走调整程序"
+    for line in (
+        "分级审批：按金额区间确定审批层级，不得拆分",
+        "发票校验：采购申请、验收单、发票三单匹配",
+        "任一控制点未通过，流程退回申请环节重新提交",
+    ):
+        frame.add_paragraph().text = line
+    for paragraph in frame.paragraphs:
+        paragraph.level = 0
+
+    deck.save(path)
+    return path
+
+
+def build_xlsx(path: Path | None = None) -> Path:
+    """Two sheets: the approval matrix and the eight process steps."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font
+
+    path = path or SAMPLES / "demo.xlsx"
+    book = Workbook()
+
+    matrix = book.active
+    matrix.title = "审批权限"
+    for row in APPROVAL:
+        matrix.append(row)
+    for cell in matrix[1]:
+        cell.font = Font(bold=True)
+    matrix.column_dimensions["A"].width = 22
+    matrix.column_dimensions["B"].width = 16
+    matrix.column_dimensions["C"].width = 18
+    matrix.column_dimensions["D"].width = 20
+
+    steps = book.create_sheet("流程环节")
+    steps.append(["序号", "环节", "是否关键控制点"])
+    for index, label in enumerate(FLOW, start=1):
+        steps.append([index, label, "是" if label in {"预算校验", "分级审批", "发票校验"} else "否"])
+    for cell in steps[1]:
+        cell.font = Font(bold=True)
+    steps.column_dimensions["B"].width = 20
+    for row in steps.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(horizontal="left")
+
+    book.save(path)
+    return path
+
+
+def build_md(path: Path | None = None) -> Path:
+    """Markdown version -- the cheapest way to show `#` headings being chunked."""
+    path = path or SAMPLES / "demo.md"
+    lines = [f"# {TITLE}", "", f"> {SUBTITLE}", "", "## 目录", ""]
+    lines += [f"{index}. {chapter}" for index, (chapter, _) in enumerate(CHAPTERS, start=1)]
+    for chapter, clauses in CHAPTERS:
+        lines += ["", f"## {chapter}", ""]
+        for no, name, text in clauses:
+            lines.append(f"- **{no} {name}**：{text}")
+        if chapter.startswith("第三章"):
+            lines += ["", "### 审批权限矩阵", ""]
+            lines.append("| " + " | ".join(APPROVAL[0]) + " |")
+            lines.append("| " + " | ".join(["---"] * len(APPROVAL[0])) + " |")
+            lines += ["| " + " | ".join(row) + " |" for row in APPROVAL[1:]]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 if __name__ == "__main__":
-    print(build())
-    print(build_fixture())
+    for builder in (build, build_fixture, build_docx, build_pptx, build_xlsx, build_md):
+        print(builder())

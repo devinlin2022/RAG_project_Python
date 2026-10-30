@@ -81,7 +81,7 @@ def test_no_hits_returns_the_abstain_answer(offline, service, sample_pdf, monkey
     assert answer["sources"] == []
 
 
-def test_ask_stream_emits_prepared_delta_done(offline, service, sample_pdf, monkeypatch):
+def test_ask_stream_emits_pipeline_then_answer(offline, service, sample_pdf, monkeypatch):
     doc, _ = service.ingest(sample_pdf)
     service.index(doc["id"])
     _embed_stub(monkeypatch, service)
@@ -90,9 +90,30 @@ def test_ask_stream_emits_prepared_delta_done(offline, service, sample_pdf, monk
     )
 
     stages = [event["stage"] for event in service.ask_stream("supplier pricing", [doc["id"]], top_k=2)]
-    assert stages[0] == "prepared"
+    # The trace the UI renders comes first, then the answer, then the summary.
+    assert stages[0] == "embed_start"
+    assert "retrieved" in stages
     assert "delta" in stages
     assert stages[-1] == "done"
+
+
+def test_pipeline_events_carry_measured_numbers(offline, service, sample_pdf, monkeypatch):
+    """Every step must report something checkable, or the panel is decoration."""
+    doc, _ = service.ingest(sample_pdf)
+    service.index(doc["id"])
+    _embed_stub(monkeypatch, service)
+    monkeypatch.setattr(
+        "rag.service.chat_stream", lambda messages, **kwargs: iter(["答 [1]"])
+    )
+
+    seen = {}
+    for event in service.ask_stream("supplier pricing", [doc["id"]], top_k=2, mode="enhanced"):
+        seen[event["stage"]] = event
+
+    assert seen["embed_done"]["dim"] > 0
+    assert seen["embed_done"]["norm"] > 0
+    assert seen["fuse_done"]["candidates"] >= 1
+    assert seen["retrieved"]["sources"]
 
 
 def test_rewrite_is_used_for_follow_up_questions(offline, service, sample_pdf, monkeypatch):
@@ -111,6 +132,70 @@ def test_rewrite_is_used_for_follow_up_questions(offline, service, sample_pdf, m
     )
     assert answer["rewritten"] is True
     assert answer["query"] == "采购流程有哪些变化"
+
+
+def test_batch_ingest_reports_every_file(offline, service, sample_pdf, tmp_path):
+    """A batch must not stop at the first bad file, and order must be preserved."""
+    good = tmp_path / "copy.pdf"
+    good.write_bytes(sample_pdf.read_bytes())
+    broken = tmp_path / "broken.zip"
+    broken.write_bytes(b"PK\x03\x04")
+
+    results = service.ingest_files([str(good), str(broken)])
+
+    assert len(results) == 2
+    assert results[0]["ok"] is True
+    assert results[0]["filename"] == "copy.pdf"
+    assert results[1]["ok"] is False
+    assert "不支持" in results[1]["error"]
+
+
+def test_usage_is_accumulated_and_persisted(offline, service, sample_pdf, monkeypatch):
+    doc, _ = service.ingest(sample_pdf)
+    service.index(doc["id"])
+    _embed_stub(monkeypatch, service)
+    monkeypatch.setattr(
+        "rag.service.chat",
+        lambda messages, **kwargs: ("结论 [1]", {"prompt_tokens": 100, "completion_tokens": 20}),
+    )
+
+    answer = service.ask("supplier pricing", [doc["id"]], top_k=2)
+
+    assert answer["usage"]["total_tokens"] == 120
+    assert service.usage_summary()["llm_in"] >= 100
+    # A restart must not reset the counter: it is summed from the query log.
+    assert service.db.usage_totals()["llm_out"] >= 20
+
+
+def test_two_modes_differ_in_cost_and_depth(offline, service):
+    fast = service.resolve_mode("fast")
+    enhanced = service.resolve_mode("enhanced")
+
+    assert fast["rerank"] is False and fast["rewrite"] is False
+    assert enhanced["rerank"] is True and enhanced["rewrite"] is True
+    assert enhanced["candidates"] > fast["candidates"]
+
+
+def test_deck_is_chunked_per_slide(offline, service, tmp_path):
+    """A slide deck must never collapse into one block citing p.1-3."""
+    pytest.importorskip("pptx")
+    from pptx import Presentation
+
+    deck = Presentation()
+    for title in ("采购申请", "预算校验", "分级审批"):
+        slide = deck.slides.add_slide(deck.slide_layouts[1])
+        slide.shapes.title.text = title
+        slide.placeholders[1].text_frame.text = f"{title}环节说明与责任部门。"
+    path = tmp_path / "deck.pptx"
+    deck.save(path)
+
+    doc, _ = service.ingest(path)
+    info = service.index(doc["id"])
+    chunks = [c for c in service.library.records if c.doc_id == doc["id"]]
+
+    assert info["strategy"] == "per-page"
+    assert len({chunk.page_from for chunk in chunks}) == 3
+    assert all(chunk.page_from == chunk.page_to for chunk in chunks)
 
 
 def test_delete_removes_document_and_chunks(offline, service, sample_pdf):

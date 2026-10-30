@@ -16,6 +16,7 @@ LABELS = {
     "structured": "结构化（标题/条款）",
     "semantic": "语义切分",
     "recursive": "递归切分",
+    "per-page": "按页切分（幻灯片）",
     "auto": "自动推荐",
 }
 
@@ -98,6 +99,44 @@ def _drop_stubs(chunks: list[Chunk]) -> list[Chunk]:
     return kept
 
 
+def chunk_per_page(
+    pairs: list[tuple[int, object]],
+    size: int = 500,
+    overlap: int = 80,
+) -> tuple[list[Chunk], dict]:
+    """One slide, one chunk. A deck must never be merged into a single block.
+
+    Slides carry no headings, so a structural splitter sees one continuous
+    document and packs the whole deck into a chunk that cites "p.1-12". Keeping
+    each slide whole makes the citation read `p.7` and stops two unrelated
+    slides from sharing a retrieval slot.
+    """
+    chunks: list[Chunk] = []
+    current_page = None
+    buffer: list[str] = []
+
+    def flush(page_no: int | None) -> None:
+        nonlocal buffer
+        text = "\n".join(buffer).strip()
+        buffer = []
+        if not text or page_no is None:
+            return
+        for piece in chunk_recursive([(page_no, text)], size=size, overlap=0) or []:
+            piece.page_from = piece.page_to = page_no
+            chunks.append(piece)
+
+    for page, block in pairs:
+        if buffer and page != current_page:
+            flush(current_page)
+        buffer.append(getattr(block, "text", ""))
+        current_page = page
+    flush(current_page)
+
+    for index, chunk in enumerate(chunks):
+        chunk.idx = index
+    return chunks, {"mode": "per-page", "pages": len({p for p, _ in pairs})}
+
+
 def chunk_document(
     pairs: list[tuple[int, object]],
     strategy: str = "auto",
@@ -108,25 +147,29 @@ def chunk_document(
     pages: int = 0,
     table_pages: int = 0,
     figure_pages: int = 0,
+    slide_deck: bool = False,
 ) -> dict:
     """Chunk a parsed document. `auto` profiles first, then dispatches."""
     if not pairs:
         return {"chunks": [], "strategy": strategy, "ms": 0, "info": {"error": "文档为空"}}
 
     profile = None
-    if strategy == "auto":
+    if strategy == "auto" and not slide_deck:
         profile = profile_document(pairs, pages, table_pages, figure_pages)
         strategy = profile.strategy
         size = profile.chunk_size
         overlap = profile.overlap
 
-    if strategy not in STRATEGIES:
+    if strategy not in STRATEGIES and not slide_deck:
         strategy = "recursive"
 
     started = time.perf_counter()
     info: dict = {}
 
-    if strategy == "hybrid":
+    if slide_deck:
+        chunks, info = chunk_per_page(pairs, size=size, overlap=overlap)
+        strategy = "per-page"
+    elif strategy == "hybrid":
         chunks, info = chunk_hybrid(
             pairs, size=size, overlap=overlap, min_chars=min_chars, percentile=percentile
         )
@@ -143,7 +186,10 @@ def chunk_document(
         info = {"mode": "recursive"}
 
     elapsed = int((time.perf_counter() - started) * 1000)
-    chunks = _drop_stubs(_attach_pages(chunks, pairs))
+    chunks = _attach_pages(chunks, pairs)
+    if not slide_deck:
+        # A title-only slide is still a slide; only drop title runs elsewhere.
+        chunks = _drop_stubs(chunks)
     source = "\n".join(getattr(block, "text", "") for _, block in pairs)
     typed = sum(1 for _, block in pairs if getattr(block, "type", "text") != "text")
 
