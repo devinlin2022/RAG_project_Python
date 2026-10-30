@@ -52,7 +52,7 @@ class OcrResult:
 def vision_chat(png: bytes, prompt: str, model: str) -> OcrResult:
     api_key = settings.ocr_api_key_resolved
     if not api_key:
-        raise OcrError("未配置 API Key，无法调用视觉模型（见 .env 的 LLM_API_KEY）")
+        raise OcrError("未配置 SILICONFLOW_API_KEY，无法调用视觉模型（OCR 与问答共用同一把 Key）")
 
     payload = {
         "model": model,
@@ -84,7 +84,10 @@ def vision_chat(png: bytes, prompt: str, model: str) -> OcrResult:
     elapsed = int((time.perf_counter() - started) * 1000)
 
     if response.status_code == 401:
-        raise OcrError("API Key 无效（401），请检查 .env 中的 LLM_API_KEY")
+        raise OcrError(
+            f"视觉模型拒绝了这个 Key（401）：当前模型 {model}、地址 {settings.ocr_base_url_resolved}。"
+            "请确认该 Key 已开通视觉模型权限"
+        )
     if response.status_code == 402:
         raise OcrError("账户余额不足（402），请先在控制台充值")
     if response.status_code == 429:

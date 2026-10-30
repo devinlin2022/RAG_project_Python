@@ -27,8 +27,8 @@ def show_config() -> None:
     print(f"EMBED_MODEL          : {settings.embed_model}  (向量)")
     print(f"RERANK_MODEL         : {settings.rerank_model}  (精排, "
           f"{'启用' if settings.rerank_enabled else '关闭'})")
-    print(f"VISION_MODEL         : {settings.vision_model}  "
-          f"(OCR / 图注, {'启用' if settings.ocr_enabled else '未启用'})")
+    print(f"OCR_MODEL            : {settings.ocr_model}  (扫描页转录, {settings.vision_state[1]})")
+    print(f"VISION_MODEL         : {settings.vision_model}  (图表描述)")
 
 
 def fetch_models(headers: dict) -> list[str] | None:
@@ -54,7 +54,8 @@ def check_models(ids: list[str]) -> tuple[bool, list[str]]:
         (settings.llm_model, "问答"),
         (settings.embed_model, "向量"),
         (settings.rerank_model, "精排"),
-        (settings.vision_model, "视觉"),
+        (settings.ocr_model, "OCR"),
+        (settings.vision_model, "图表"),
     ):
         wanted.setdefault(model_id, []).append(role)
 
@@ -156,7 +157,7 @@ def check_rerank(headers: dict) -> bool:
 
 def check_ocr() -> bool:
     if not settings.ocr_enabled:
-        print("  SKIP vision    未启用（OCR_ENABLED=false），表格通道不受影响")
+        print(f"  SKIP vision    {settings.vision_state[1]}；表格通道不受影响")
         return True
     from rag.ingest.ocr import OcrError, ocr_page
 
@@ -166,7 +167,7 @@ def check_ocr() -> bool:
     except (OcrError, ValueError) as exc:
         print(f"  FAIL vision    {exc}")
         return False
-    print(f"  OK   vision    {result.ms / 1000:.1f}s  {len(result.text)} 字  {settings.vision_model}")
+    print(f"  OK   vision    {result.ms / 1000:.1f}s  {len(result.text)} 字  {settings.ocr_model}")
     return True
 
 

@@ -122,11 +122,15 @@ def main() -> None:
     print(f"  chat     : {settings.llm_model}")
     print(f"  embed    : {settings.embed_model} {'可用' if settings.embed_ready else '不可用'}")
     print(f"  rerank   : {settings.rerank_model} {'可用' if settings.rerank_ready else '关闭'}")
-    print(f"  vision   : {settings.vision_model} {'启用' if settings.ocr_enabled else '关闭'}")
-    print(f"  api_key  : {'已配置' if settings.llm_configured else '未配置（问答会提示）'}")
+    print(
+        f"  ocr      : {settings.ocr_model} {'可用' if settings.ocr_ready else '关闭'}"
+        f"（{settings.vision_state[1]}）"
+    )
+    print(f"  figure   : {settings.vision_model}")
+    print(f"  model_key: {'已配置' if settings.llm_configured else '未配置（问答会提示）'}")
     print(f"  index    : {stats['docs']} 篇 / {stats['chunks']} 块 / {stats['vectors']} 向量")
-    print(f"  auth     : API Key {'必需' if settings.app_api_key else '未启用'}"
-          f"　｜　界面登录 {'启用' if settings.ui_auth else '未启用'}")
+    print(f"  access   : 接口保护 {'需要 X-API-Key' if settings.auth_required else '未开启'}"
+          f"　｜　界面登录 {'需要密码' if settings.ui_auth else '未开启'}")
     print(f"  页面     : http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}")
     print(f"  接口文档 : http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}/docs")
 

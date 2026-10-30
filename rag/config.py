@@ -19,6 +19,10 @@ DEFAULT_BASE_URL = "https://api.siliconflow.cn/v1"
 DEFAULT_LLM = "deepseek-ai/DeepSeek-V3.2"
 DEFAULT_EMBED = "BAAI/bge-m3"
 DEFAULT_RERANK = "BAAI/bge-reranker-v2-m3"
+# Scanned pages only need faithful transcription, and 8B does that as accurately
+# as 32B while spending a third of the time (measured on the demo policy: same
+# 272 chars, 7.7s vs 17.5s). Figures get the 32B model, which reasons about arrows.
+DEFAULT_OCR = "Qwen/Qwen3-VL-8B-Instruct"
 DEFAULT_VISION = "Qwen/Qwen3-VL-32B-Instruct"
 
 
@@ -53,10 +57,14 @@ class Settings(BaseSettings):
     rerank_model: str = Field(
         DEFAULT_RERANK, validation_alias=AliasChoices("RERANK_MODEL", "rerank_model")
     )
-    # OCR is a prompt over the vision model, not a separate service.
+    # OCR is a prompt over a vision model, not a separate service. Two ids on
+    # purpose: transcription on scanned pages wants the cheap model, figures
+    # want the one that reasons about what the arrows mean.
+    ocr_model: str = Field(
+        DEFAULT_OCR, validation_alias=AliasChoices("OCR_MODEL", "ocr_model")
+    )
     vision_model: str = Field(
-        DEFAULT_VISION,
-        validation_alias=AliasChoices("VISION_MODEL", "OCR_MODEL", "vision_model"),
+        DEFAULT_VISION, validation_alias=AliasChoices("VISION_MODEL", "vision_model")
     )
 
     temperature: float = 0.2
@@ -83,7 +91,10 @@ class Settings(BaseSettings):
     ngrok_authtoken: str = ""
 
     # ── vision rails (OCR / figure caption) ─────────────────────────
-    ocr_enabled: bool = False
+    # On by default: the moment a key resolves, scanned pages should be read.
+    # Set OCR_ENABLED=false to keep the vision model out of the loop entirely
+    # (that is the only reason a configured key would ever show "关闭").
+    ocr_enabled: bool = True
     ocr_base_url: str = ""
     ocr_api_key: str = ""
     ocr_render_dpi: int = 150
@@ -160,10 +171,6 @@ class Settings(BaseSettings):
         return self.llm_api_key.strip()
 
     @property
-    def ocr_model(self) -> str:
-        return self.vision_model
-
-    @property
     def llm_configured(self) -> bool:
         return bool(self.api_key)
 
@@ -178,6 +185,24 @@ class Settings(BaseSettings):
     @property
     def ocr_ready(self) -> bool:
         return self.ocr_enabled and bool(self.ocr_api_key_resolved)
+
+    @property
+    def vision_state(self) -> tuple[bool, str]:
+        """Why the vision rail is (not) available -- the status line needs a reason.
+
+        Two different switches used to look identical in the UI: "no key" and
+        "user turned it off". They are not the same thing to a reader.
+        """
+        if not self.ocr_enabled:
+            return False, "已按 OCR_ENABLED=false 关闭"
+        if not self.ocr_api_key_resolved:
+            return False, "未配置 API Key（SILICONFLOW_API_KEY）"
+        return True, "就绪"
+
+    @property
+    def auth_required(self) -> bool:
+        """Protection for the HTTP API itself, unrelated to the model key."""
+        return bool(self.app_api_key.strip())
 
     # ── URLs ────────────────────────────────────────────────────────
 

@@ -377,6 +377,7 @@ class Service:
         top_k: int | None = None,
         strategy: str | None = None,
         rerank: bool | None = None,
+        candidates: int | None = None,
     ) -> dict:
         """Retrieve + optional rerank. Shared by ask, debug and evaluation."""
         if not query or not query.strip():
@@ -394,7 +395,7 @@ class Service:
             self.library,
             strategy=strategy,
             top_k=top_k,
-            candidates=settings.rerank_candidates,
+            candidates=candidates or settings.rerank_candidates,
             doc_ids=doc_ids,
             rrf_k=settings.rrf_k,
         )
@@ -425,6 +426,109 @@ class Service:
             "embed_error": embed_error,
             "doc_ids": doc_ids,
         }
+
+    def retrieve_mode(
+        self,
+        query: str,
+        doc_ids: list[str] | None = None,
+        mode: str = "fast",
+        top_k: int = 5,
+    ) -> dict:
+        """One question through one mode's settings, without generating an answer.
+
+        Evaluation and the mode comparison both need this: `retrieve` alone
+        cannot express "the enhanced pool is twice as wide".
+        """
+        plan = self.resolve_mode(mode)
+        result = self.retrieve(
+            query,
+            doc_ids,
+            top_k=top_k,
+            strategy=plan["strategy"],
+            rerank=plan["rerank"],
+            candidates=max(int(plan["candidates"]), top_k),
+        )
+        result["mode"] = plan
+        return result
+
+    def compare_modes(
+        self, query: str, doc_ids: list[str] | None = None, top_k: int = 5
+    ) -> dict:
+        """Run the same question through both modes and say which one earned its cost.
+
+        No model call: both runs stop before generation, so pressing this button
+        costs one embedding and (in enhanced mode) one rerank -- not an answer.
+        The numbers are retrieval facts, not a guessed quality score.
+        """
+        rows: list[dict] = []
+        for name in ("fast", "enhanced"):
+            result = self.retrieve_mode(query, doc_ids, mode=name, top_k=top_k)
+            hits = result["hits"]
+            pages: list[int] = []
+            for hit in hits:
+                for page in range(hit.record.page_from, hit.record.page_to + 1):
+                    if page not in pages:
+                        pages.append(page)
+            scores = [hit.score for hit in hits]
+            head = scores[0] if scores else 0.0
+            rest = scores[1:] or [0.0]
+            total_pages = self._scope_pages(doc_ids)
+            rows.append(
+                {
+                    "mode": name,
+                    "label": MODES[name]["label"],
+                    "hits": len(hits),
+                    "pages": sorted(pages),
+                    "coverage": round(len(pages) / total_pages, 4) if total_pages else 0.0,
+                    "top_score": round(head, 6),
+                    "margin": round(head - sum(rest) / len(rest), 6),
+                    "rerank_used": bool(result["rerank"].get("used")),
+                    "rerank_top": round(
+                        max((hit.rerank or 0.0) for hit in hits), 6
+                    ) if hits else 0.0,
+                    "ms": round(result["timings"].get("retrieve_ms", 0.0)),
+                    "keys": {f"{hit.record.doc_id}:{hit.record.page_from}" for hit in hits},
+                    "pages_set": set(pages),
+                }
+            )
+
+        fast, enhanced = rows
+        new_pages = sorted(enhanced["pages_set"] - fast["pages_set"])
+        dropped = sorted(fast["pages_set"] - enhanced["pages_set"])
+        gained = len(new_pages)
+
+        if enhanced["pages_set"] == fast["pages_set"]:
+            advice = "两种模式命中的是同一批页，这个问题用「快速检索」就够，省一次改写和一次精排。"
+        elif gained and not dropped:
+            listed = "、".join(f"p.{page}" for page in new_pages[:4])
+            advice = (
+                f"「增强检索」在同样的问题上多带回了 {gained} 页（{listed}），"
+                "问题涉及跨段信息时值得多花这点时间。"
+            )
+        elif gained and dropped:
+            listed_in = "、".join(f"p.{page}" for page in new_pages[:3])
+            listed_out = "、".join(f"p.{page}" for page in dropped[:3])
+            advice = (
+                f"「增强检索」换入了 {listed_in}，挤出了 {listed_out}。"
+                "静默改写会扩大召回面，也会挤掉原本靠前的块——答案出现偏移时先看这里。"
+            )
+        else:
+            advice = "「增强检索」没有新增页，还挤掉了几页，本次用「快速检索」更稳妥。"
+
+        return {
+            "query": query,
+            "top_k": top_k,
+            "rows": [{key: value for key, value in row.items() if key not in ("keys", "pages_set")} for row in rows],
+            "new_pages": new_pages,
+            "dropped_pages": dropped,
+            "advice": advice,
+        }
+
+    def _scope_pages(self, doc_ids: list[str] | None) -> int:
+        docs = [
+            doc for doc_id, doc in self.docs.items() if not doc_ids or doc_id in doc_ids
+        ]
+        return sum(doc["page_count"] for doc in docs) or 0
 
     def debug(self, query: str, doc_ids: list[str] | None = None, top_k: int = 5) -> dict:
         """Run all three strategies on one query for the comparison table."""
@@ -769,11 +873,13 @@ class Service:
         with_generation: bool = False,
         limit: int | None = None,
         golden_path: str | Path | None = None,
+        mode: str | None = None,
+        doc_ids: list[str] | None = None,
     ) -> dict:
         from eval.run_eval import load_golden, run_questions
 
         questions = load_golden(golden_path)
-        doc_ids = self.doc_ids_matching(doc_pattern)
+        picked = doc_ids if doc_ids is not None else self.doc_ids_matching(doc_pattern)
         rows, skipped = run_questions(
             self,
             questions,
@@ -782,7 +888,8 @@ class Service:
             strategy=strategy,
             with_generation=with_generation,
             limit=limit,
-            doc_ids=doc_ids,
+            doc_ids=picked,
+            mode=mode,
         )
         from eval.metrics import summarize
 
@@ -814,6 +921,10 @@ class Service:
             },
             "ocr": {
                 "enabled": settings.ocr_enabled,
+                "ready": settings.ocr_ready,
+                # Why it is (not) on: "no key" and "switched off" are different
+                # problems, and the status table used to show both as 未启用.
+                "state": settings.vision_state[1],
                 "model": settings.ocr_model,
                 "vision_model": settings.vision_model,
                 "concurrency": settings.ocr_concurrency,

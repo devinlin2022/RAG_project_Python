@@ -39,6 +39,7 @@ def run_questions(
     with_generation: bool = False,
     limit: int | None = None,
     doc_ids: list[str] | None = None,
+    mode: str | None = None,
 ) -> tuple[list[dict], int]:
     """Run the golden set. Returns (rows, skipped_count)."""
     from rag.retrieve.retriever import rerank_hits
@@ -62,7 +63,12 @@ def run_questions(
             continue
 
         started = time.perf_counter()
-        result = service.retrieve(question["q"], scoped, top_k=top_k, strategy=strategy)
+        if mode:
+            # Mode-driven run: the pool width and the rerank switch come from
+            # MODES, so "快速 vs 增强" can be measured on the same question set.
+            result = service.retrieve_mode(question["q"], scoped, mode=mode, top_k=top_k)
+        else:
+            result = service.retrieve(question["q"], scoped, top_k=top_k, strategy=strategy)
         spans = [(hit.record.page_from, hit.record.page_to) for hit in result["hits"]]
         pages = [first for first, _ in spans]
         gold = [int(p) for p in question.get("pages", [])]

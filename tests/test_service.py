@@ -247,3 +247,42 @@ def test_rerank_path_is_wired(offline, service, sample_pdf, monkeypatch):
     assert result["rerank"]["used"] is True
     assert result["rerank"]["model"] == settings.rerank_model
     assert result["hits"][0].rerank is not None
+
+
+def test_compare_modes_reports_both_runs_and_advice(offline, service, sample_pdf):
+    """The panel behind 「要不要用增强检索」 must run retrieval twice, no model."""
+    doc, _ = service.ingest(sample_pdf)
+    service.index(doc["id"])
+
+    report = service.compare_modes("approval flow", [doc["id"]], top_k=3)
+
+    assert [row["mode"] for row in report["rows"]] == ["fast", "enhanced"]
+    fast, enhanced = report["rows"]
+    assert 0.0 <= fast["coverage"] <= 1.0 and 0.0 <= enhanced["coverage"] <= 1.0
+    assert enhanced["hits"] >= fast["hits"]          # 更宽的候选池
+    assert report["advice"]                          # 没有建议就是没结论
+    assert report["query"] == "approval flow"
+
+
+def test_compare_modes_flags_identical_page_sets(offline, service, sample_pdf):
+    """Offline both modes see the same chunks, so the advice must say 'use fast'."""
+    doc, _ = service.ingest(sample_pdf)
+    service.index(doc["id"])
+
+    report = service.compare_modes("supplier pricing", [doc["id"]], top_k=3)
+
+    assert report["rows"][0]["pages"] == report["rows"][1]["pages"]
+    assert "同一批页" in report["advice"] and "快速检索" in report["advice"]
+
+
+def test_evaluate_can_run_one_mode(offline, service, tmp_path):
+    from pathlib import Path as _Path
+
+    policy = _Path(__file__).resolve().parents[1] / "data" / "samples" / "demo-policy.pdf"
+    doc, _ = service.ingest(policy)
+    service.index(doc["id"])
+
+    result = service.evaluate(doc_pattern="demo-policy", top_k=3, mode="enhanced")
+
+    assert result["summary"]["questions"] > 0
+    assert result["rows"]

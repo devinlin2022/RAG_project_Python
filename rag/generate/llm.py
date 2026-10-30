@@ -17,7 +17,7 @@ class LLMError(RuntimeError):
 
 def _headers() -> dict:
     if not settings.llm_configured:
-        raise LLMError("未配置 LLM_API_KEY，请在 .env 中填写后重启服务")
+        raise LLMError("未配置 SILICONFLOW_API_KEY：请在 .env 填写后重启，或在界面「运行状态」里临时粘贴")
     return {
         "Authorization": f"Bearer {settings.llm_api_key.strip()}",
         "Content-Type": "application/json; charset=utf-8",
@@ -27,13 +27,18 @@ def _headers() -> dict:
 def _explain(response) -> LLMError:
     detail = response.text.strip().replace("\n", " ")[:200]
     if response.status_code == 401:
-        return LLMError("API Key 无效（401），请检查 LLM_API_KEY")
+        return LLMError(
+            f"API Key 被拒绝（401）：{detail or '平台未说明原因'}。"
+            f"当前 key 尾号 {settings.llm_api_key.strip()[-4:] or '空'}、"
+            f"地址 {settings.llm_url}、模型 {settings.llm_model}。"
+            "问答、向量、精排、视觉共用 SILICONFLOW_API_KEY，改一处即可。"
+        )
     if response.status_code == 402:
         return LLMError(f"账户余额不足（402）：{detail}")
     if response.status_code == 404:
         return LLMError(
             f"接口或模型不存在（404）：{detail}。"
-            "请核对 LLM_BASE_URL 是否以 /v1 结尾，以及 LLM_MODEL 是否为平台上的完整模型 ID"
+            "请核对 SILICONFLOW_BASE_URL 是否以 /v1 结尾，以及 LLM_MODEL 是否为平台上的完整模型 ID"
         )
     return LLMError(f"HTTP {response.status_code}：{detail}")
 
