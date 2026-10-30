@@ -12,6 +12,8 @@ from pathlib import Path
 
 import gradio as gr
 
+from app.style import CSS, HEAD
+from app.style import _ICON_PATHS as ICON_PATHS
 from rag.config import VERSION, settings
 from rag.ingest.extract import SUPPORTED_EXT
 from rag.ingest.loader import page_text as page_text_view
@@ -35,20 +37,20 @@ PLAN_STEPS = {
 }
 
 STEPS = [
-    ("upload", "① 上传建索引", "文件解析、切块、算向量"),
-    ("parse", "② 解析结果", "格式识别与逐页文本量"),
-    ("chunks", "③ 分块地图", "每块的位置、类型、字数"),
-    ("pages", "④ 页级诊断", "每页的扫描 / 表格 / 图形信号"),
-    ("text", "⑤ 原文查看", "逐页核对识别结果"),
-    ("metrics", "⑥ 检索指标", "两种模式在这份文档上的实测表现"),
+    ("upload", "上传建索引", "文件解析、切块、算向量"),
+    ("parse", "解析结果", "格式识别与逐页文本量"),
+    ("chunks", "分块地图", "每块的位置、类型、字数"),
+    ("pages", "页级诊断", "每页的扫描 / 表格 / 图形信号"),
+    ("text", "原文查看", "逐页核对识别结果"),
+    ("metrics", "检索指标", "两种模式在这份文档上的实测表现"),
 ]
 STEP_LABELS = {key: label for key, label, _ in STEPS}
 
 KIND_STYLE = {
-    "text": ("正文", "#e8eef7", "#c8d7ea"),
-    "table": ("表格", "#e4f3e8", "#bfdcc8"),
-    "figure": ("图注", "#fdeee0", "#f0cfae"),
-    "ocr": ("OCR", "#f1e8fb", "#d8c3f0"),
+    "text": ("正文", "#1a56db"),
+    "table": ("表格", "#057a55"),
+    "figure": ("图注", "#b45309"),
+    "ocr": ("OCR", "#7e3af2"),
 }
 
 
@@ -135,15 +137,16 @@ def _doc_summary(doc: dict) -> str:
 # ------------------------------------------------------------------ visuals
 
 
-def _bar(pct: float, color: str, border: str, height: int = 10) -> str:
+def _bar(pct: float, color: str, height: int = 7) -> str:
+    """One proportional bar inside a shared track."""
     return (
-        f"<span style='display:inline-block;height:{height}px;border-radius:3px;"
-        f"background:{color};border:1px solid {border};width:{max(pct, 0.6):.2f}%'></span>"
+        f"<span class='fb-track'><i style='width:{max(pct, 1.5):.2f}%;"
+        f"background:{color}'></i></span>"
     )
 
 
 def flow_html(steps: list[dict]) -> str:
-    """The six-step directory as a progress strip: where you are, what is ready.
+    """The six-step directory as a stepper: what has been done to this file.
 
     A tab bar tells you what exists; this tells you what has actually been done
     to the document, which is the part a reader cannot infer from a filename.
@@ -151,27 +154,12 @@ def flow_html(steps: list[dict]) -> str:
     chips = []
     for index, step in enumerate(steps):
         done = step.get("done")
-        color = "#1a7f37" if done else "#8b949e"
-        mark = "✓" if done else str(index + 1)
-        background = "#e8f5ec" if done else "#f6f8fa"
         chips.append(
-            "<div style='display:flex;flex-direction:column;gap:2px;flex:1 1 0;min-width:96px;"
-            f"padding:6px 8px;border:1px solid {'#bfdcc8' if done else '#d8dee4'};"
-            f"border-radius:6px;background:{background}'>"
-            f"<div style='font-size:10px;color:{color};letter-spacing:.04em'>"
-            f"{mark}　{html.escape(step['label'])}</div>"
-            f"<div style='font-size:11px;color:#57606a;white-space:nowrap;overflow:hidden;"
-            f"text-overflow:ellipsis'>{html.escape(step.get('hint', ''))}</div>"
-            "</div>"
+            f"<div class='fb-step-chip{' done' if done else ''}'>"
+            f"<b>{'✓' if done else index + 1}　{html.escape(step['label'])}</b>"
+            f"<span>{html.escape(step.get('hint', ''))}</span></div>"
         )
-        if index < len(steps) - 1:
-            chips.append(
-                "<div style='flex:0 0 10px;align-self:center;color:#d0d7de;font-size:12px'>›</div>"
-            )
-    return (
-        "<div style=\"display:flex;gap:4px;align-items:stretch;font-family:ui-sans-serif,"
-        "system-ui,'Segoe UI',sans-serif;margin:2px 0 10px\">" + "".join(chips) + "</div>"
-    )
+    return "<div class='fb-stepper'>" + "".join(chips) + "</div>"
 
 
 def step_states(doc: dict | None, chunks: list) -> list[dict]:
@@ -205,28 +193,31 @@ def page_strip_html(doc: dict | None) -> str:
     cells = []
     for page in doc["pages"]:
         shade = page["chars"] / peak
-        background = f"rgba(31,111,235,{0.10 + 0.55 * shade:.2f})" if page["chars"] else "#eef1f4"
+        tone = f"rgba(26,86,219,{0.12 + 0.6 * shade:.2f})" if page["chars"] else ""
         flag = page.get("scan_like") and "扫描" or page.get("table_like") and "表格" or ""
         title = f"第 {page['page']} 页 · {page['chars']} 字符" + (f" · {flag}" if flag else "")
         cells.append(
-            f"<div title='{title}' style=\"flex:1 1 0;min-width:4px;height:16px;"
-            f"background:{background}\"></div>"
+            f"<i title='{html.escape(title)}'" + (f" style='background:{tone}'" if tone else "") + "></i>"
         )
     thin = sum(1 for value in chars if value < settings.scan_page_char_threshold)
     return (
-        "<div style='display:flex;gap:2px;margin:6px 0 4px'>" + "".join(cells) + "</div>"
-        "<div style='font-size:11px;color:#8b949e'>页轴：%d 页 · 颜色越深文字越多 · "
-        "低于 %d 字的页 %d 页（会触发扫描件判断）</div>"
-        % (len(chars), settings.scan_page_char_threshold, thin)
+        "<div class='fb-strip'>" + "".join(cells) + "</div>"
+        "<div class='fb-strip-note'>"
+        f"<span>{len(chars)} 页</span><span>颜色越深文字越多</span>"
+        f"<span>低于 {settings.scan_page_char_threshold} 字的页 {thin} 页</span></div>"
     )
 
 
-def chunk_map_html(chunks: list, hits: list[dict] | None = None, limit: int = 240) -> str:
+def chunk_map_html(
+    chunks: list, hits: list[dict] | None = None, limit: int = 240, title: str = "分块地图"
+) -> str:
     """Blocks as proportional bars: what the splitter produced, and what answered."""
     if not chunks:
         return (
-            "<div style='color:#57606a;font-size:13px;padding:8px 0'>"
-            "还没有分块。上传文件并建立索引后，这里会显示每个块的位置与大小。</div>"
+            "<div class='fb-card'><div class='fb-card-head'>"
+            f"<div><div class='fb-card-title'>{title}</div></div></div>"
+            "<div class='fb-empty'>还没有分块。上传文件并建立索引后，"
+            "这里会显示每个块的位置与大小。</div></div>"
         )
 
     rank = {f"{item['doc_id']}:{item['page']}": item["n"] for item in (hits or [])}
@@ -241,76 +232,63 @@ def chunk_map_html(chunks: list, hits: list[dict] | None = None, limit: int = 24
     cells = []
     for page in range(1, pages + 1):
         shade = per_page.get(page, 0) / peak
-        background = f"rgba(31,111,235,{0.10 + 0.55 * shade:.2f})" if shade else "#eef1f4"
-        ring = ""
-        if hits:
-            cited = any(
-                item["page"] <= page <= item.get("page_to", item["page"]) for item in hits
-            )
-            ring = "box-shadow:0 0 0 1.5px #d1242f;" if cited else ""
+        tone = f"rgba(26,86,219,{0.12 + 0.6 * shade:.2f})" if shade else ""
+        cited = bool(hits) and any(
+            item["page"] <= page <= item.get("page_to", item["page"]) for item in hits
+        )
         cells.append(
-            f"<div title='第 {page} 页 · {per_page.get(page, 0)} 字符' style=\"flex:1 1 0;"
-            f"min-width:4px;height:16px;background:{background};{ring}\"></div>"
+            f"<i class='{'cited' if cited else ''}' title='第 {page} 页 · {per_page.get(page, 0)} 字符'"
+            + (f" style='background:{tone}'" if tone else "")
+            + "></i>"
         )
 
     rows = []
     for chunk in chunks[:limit]:
         hit = rank.get(f"{chunk.doc_id}:{chunk.page_from}")
-        label, fill, edge = KIND_STYLE.get(chunk.kind, KIND_STYLE["text"])
+        label, color = KIND_STYLE.get(chunk.kind, KIND_STYLE["text"])
         width = chunk.chars / biggest * 100
-        badge = (
-            f"<span style='background:#d1242f;color:#fff;border-radius:9px;padding:0 6px;"
-            f"font-size:10px;margin-left:6px'>引用 {hit}</span>"
-            if hit
-            else ""
-        )
-        outline = "outline:1.5px solid #d1242f;outline-offset:1px;" if hit else ""
-        preview = html.escape(" ".join(chunk.text.split())[:72])
+        badge = f"<span class='fb-cite' title='引用 {hit}'>{hit}</span>" if hit else ""
+        span = f"p.{chunk.page_from}"
+        if chunk.page_to != chunk.page_from:
+            span += f"-{chunk.page_to}"
+        preview = html.escape(" ".join(chunk.text.split())[:84])
         rows.append(
-            "<div style='display:flex;align-items:center;gap:8px;padding:2px 0;"
-            f"font-size:12px;color:#1f2328;{outline}'>"
-            f"<span style='flex:0 0 46px;color:#57606a'>#{chunk.idx}</span>"
-            f"<span style='flex:0 0 58px;color:#57606a'>"
-            f"p.{chunk.page_from}{'' if chunk.page_from == chunk.page_to else '-' + str(chunk.page_to)}</span>"
-            f"<span style='flex:0 0 34px;color:#57606a'>{label}</span>"
-            f"<span style='flex:0 0 96px;text-align:right;color:#1f2328'>{chunk.chars} 字</span>"
-            f"<span style='flex:0 0 34%;'>{_bar(width, fill, edge)}</span>"
-            f"<span style='flex:1 1 auto;color:#57606a;overflow:hidden;"
-            f"text-overflow:ellipsis;white-space:nowrap'>{preview}{badge}</span>"
+            f"<div class='fb-map-row{' cited' if hit else ''}'>"
+            f"<span class='fb-map-idx'>#{chunk.idx}</span>"
+            f"<span class='fb-map-page'>{span}</span>"
+            f"<span class='fb-map-kind'>{label}</span>"
+            f"{_bar(width, color)}"
+            f"<span class='fb-map-chars'>{chunk.chars} 字</span>"
+            f"<div class='fb-map-preview'>{preview}{badge}</div>"
             "</div>"
         )
 
     more = (
-        f"<div style='color:#8b949e;font-size:11px;padding-top:4px'>"
-        f"共 {len(chunks)} 块，仅显示前 {limit} 块</div>"
+        f"<div class='fb-strip-note'>共 {len(chunks)} 块，仅显示前 {limit} 块</div>"
         if len(chunks) > limit
         else ""
     )
 
     legend = "".join(
-        f"<span style='display:inline-block;width:10px;height:10px;background:{fill};"
-        f"border:1px solid {edge};border-radius:2px;margin-right:4px'></span>"
-        f"<span style='margin-right:14px;color:#57606a'>{name}</span>"
-        for name, fill, edge in KIND_STYLE.values()
+        f"<span><b style='background:{color}'></b>{name}</span>"
+        for name, color in KIND_STYLE.values()
     )
 
+    sub = "按字数成比例 · 红框为被引用页" if hits else "按字数成比例 · 颜色为块类型"
     return (
-        "<div style=\"font-family:ui-sans-serif,system-ui,'Segoe UI',sans-serif\">"
-        "<div style='display:flex;gap:2px;margin-bottom:8px'>"
-        + "".join(cells)
+        "<div class='fb-card'><div class='fb-card-head'>"
+        f"<div><div class='fb-card-title'>{title}</div>"
+        f"<div class='fb-card-sub'>{sub}</div></div>"
+        f"<span class='fb-badge'>{len(chunks)} 块</span></div>"
+        "<div class='fb-card-body tight'>"
+        "<div class='fb-strip'>" + "".join(cells) + "</div>"
+        "<div class='fb-strip-note'>"
+        f"<span>{pages} 页</span><span>颜色越深文字越多</span>"
+        + ("<span>红框＝被引用页</span>" if hits else "")
         + "</div>"
-        "<div style='font-size:11px;color:#8b949e;margin-bottom:6px'>"
-        f"页轴：{pages} 页 · 颜色越深文字越多"
-        + ("　·　红框＝被引用页" if hits else "")
-        + "</div>"
-        "<div style='max-height:340px;overflow:auto;border:1px solid #d8dee4;border-radius:6px;"
-        "padding:6px 8px;background:#fff'>"
-        + "".join(rows)
-        + more
-        + "</div>"
-        "<div style='font-size:11px;margin-top:8px'>"
-        + legend
-        + "</div></div>"
+        "<div class='fb-map'>" + "".join(rows) + more + "</div>"
+        "<div class='fb-legend'>" + legend + "</div>"
+        "</div></div>"
     )
 
 
@@ -343,13 +321,12 @@ STEP_TITLES = {
     "generate": ("生成回答", "只依据命中块作答并标注引用"),
 }
 
-_STATUS_COLOR = {
-    "pending": ("#d8dee4", "#8b949e", "·"),
-    "running": ("#1f6feb", "#1f6feb", "◐"),
-    "done": ("#1a7f37", "#1a7f37", "✓"),
-    "skip": ("#bf8700", "#bf8700", "–"),
-    "error": ("#d1242f", "#d1242f", "!"),
-}
+_STATUS_MARK = {"pending": "·", "running": "<i></i>", "done": "✓", "skip": "–", "error": "!"}
+
+_LEAN_FOOT = (
+    "<div class='fb-trace-foot'>快速检索到此为止：两路检索并行、按名次融合后直接作答。"
+    "切到<b>增强检索</b>会多出改写、BM25 分词、RRF 融合与精排前后分对比。</div>"
+)
 
 
 def plan_steps(mode: str) -> list[dict]:
@@ -360,6 +337,7 @@ def plan_steps(mode: str) -> list[dict]:
 
 def render_trace(steps: list[dict], mode: str = "fast") -> str:
     """Vertical timeline of the pipeline. Every line carries a measured number."""
+    title = "增强检索流水线" if mode == "enhanced" else "快速检索"
     if not steps:
         keys = PLAN_STEPS.get(mode, PLAN_STEPS["fast"])
         names = " → ".join(STEP_TITLES[key][0] for key in keys)
@@ -369,7 +347,12 @@ def render_trace(steps: list[dict], mode: str = "fast") -> str:
             else f"提问后这里按顺序亮起：{names}。"
         )
         return (
-            "<div style='color:#57606a;font-size:13px;padding:10px 4px'>" + note + "</div>"
+            "<div class='fb-card'><div class='fb-card-head'>"
+            f"<div><div class='fb-card-title'>{title}</div>"
+            f"<div class='fb-card-sub'>{len(keys)} 步 · 每题实时计时</div></div>"
+            f"<span class='fb-badge'>{len(keys)} 步</span></div>"
+            f"<div class='fb-card-body'><div class='fb-trace'><div class='fb-empty'>{note}</div>"
+            "</div></div></div>"
         )
 
     done = sum(1 for step in steps if step.get("status") in ("done", "skip"))
@@ -377,41 +360,35 @@ def render_trace(steps: list[dict], mode: str = "fast") -> str:
     rows = []
     for step in steps:
         status = step.get("status", "pending")
-        color, text_color, mark = _STATUS_COLOR.get(status, _STATUS_COLOR["pending"])
         detail = step.get("detail") or ""
         meta = step.get("meta") or ""
-        spin = "animation:rt-spin 1.1s linear infinite;display:inline-block;" if status == "running" else ""
         rows.append(
-            "<div style='display:flex;gap:10px;padding:5px 0'>"
-            f"<div style='flex:0 0 18px;height:18px;line-height:18px;text-align:center;"
-            f"border-radius:9px;border:1px solid {color};color:{text_color};font-size:11px;"
-            f"background:#fff;{spin}'>{mark}</div>"
-            "<div style='flex:1 1 auto;min-width:0'>"
-            f"<div style='font-size:13px;color:#1f2328;font-weight:600'>"
-            f"{html.escape(step.get('title', ''))}"
-            + (f"<span style='font-weight:400;color:#8b949e;margin-left:8px'>{html.escape(meta)}</span>" if meta else "")
+            f"<div class='fb-step {html.escape(status)}'>"
+            f"<div class='fb-step-dot'>{_STATUS_MARK.get(status, '·')}</div>"
+            "<div class='fb-step-body'>"
+            f"<div class='fb-step-name'>{html.escape(step.get('title', ''))}"
+            + (f"<em>{html.escape(meta)}</em>" if meta else "")
             + "</div>"
-            + (
-                f"<div style='font-size:12px;color:#57606a;line-height:1.5;word-break:break-word'>"
-                f"{html.escape(detail)}</div>"
-                if detail
-                else ""
-            )
+            + (f"<div class='fb-step-detail'>{html.escape(detail)}</div>" if detail else "")
             + "</div></div>"
         )
 
     pct = done / total * 100 if total else 0
+    foot = _LEAN_FOOT if mode == "fast" and all(
+        step.get("status") in ("done", "skip", "error") for step in steps
+    ) else ""
     return (
-        "<style>@keyframes rt-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}</style>"
-        "<div style=\"font-family:ui-sans-serif,system-ui,'Segoe UI',sans-serif;"
-        "background:#f6f8fa;border:1px solid #d8dee4;border-radius:8px;padding:10px 12px\">"
-        "<div style='display:flex;justify-content:space-between;align-items:center;"
-        "font-size:11px;letter-spacing:.08em;color:#8b949e;margin-bottom:6px'>"
-        f"<span>PIPELINE</span><span>{done}/{total}</span></div>"
-        "<div style='height:3px;background:#e4e8ec;border-radius:2px;margin-bottom:1px'>"
-        f"<div style='height:3px;width:{pct:.0f}%;background:#1a7f37;border-radius:2px'></div></div>"
+        "<div class='fb-card'><div class='fb-card-head'>"
+        f"<div><div class='fb-card-title'>{title}</div>"
+        f"<div class='fb-card-sub'>{total} 步 · 每一步都带实测数字</div></div>"
+        f"<span class='fb-badge {'green' if done == total else ''}'>{done}/{total}</span></div>"
+        "<div class='fb-card-body'>"
+        "<div class='fb-trace'>"
+        "<div class='fb-progress'><i style='width:%.0f%%'></i></div>" % pct
         + "".join(rows)
         + "</div>"
+        + foot
+        + "</div></div>"
     )
 
 
@@ -579,35 +556,214 @@ def _system_markdown(service: Service) -> str:
     )
 
 
-def build_ui(service: Service) -> gr.Blocks:
-    ready = settings.llm_configured
-    vision_ok, vision_note = settings.vision_state
-    header = (
-        f"# 文档助手 v{VERSION}\n"
-        f"对话 `{settings.llm_model}`（{'就绪' if ready else '**缺少 API Key**'}）"
-        f"　｜　向量 `{settings.embed_model}`"
-        f"　｜　视觉 `{settings.ocr_model}`（{'就绪' if vision_ok else vision_note}）"
-        f"　｜　已索引 {service.library.stats()['docs']} 篇 / "
-        f"{service.library.stats()['chunks']} 块"
+# ------------------------------------------------------------------ shell
+
+
+def icon(name: str, size: int = 16) -> str:
+    """Inline SVG using the same path set the CSS masks are built from."""
+    path = ICON_PATHS.get(name, "")
+    return (
+        f"<svg viewBox='0 0 24 24' width='{size}' height='{size}' fill='none' "
+        "stroke='currentColor' stroke-width='1.8' stroke-linecap='round' "
+        f"stroke-linejoin='round'><path d='{path}'/></svg>"
     )
 
-    with gr.Blocks(title=f"文档助手 v{VERSION}") as demo:
-        gr.Markdown(header)
 
+def _short(model: str) -> str:
+    return (model or "—").split("/")[-1]
+
+
+def brand_html() -> str:
+    return (
+        "<div class='fb-brand'>"
+        f"<div class='fb-brand-mark'>{icon('doc', 18)}</div>"
+        "<div><div class='fb-brand-name'>文档助手</div>"
+        f"<div class='fb-brand-sub'>v{VERSION} · 硅基流动</div></div>"
+        "</div>"
+    )
+
+
+def rail_status_html(service: Service) -> str:
+    """Four dots, not a table: whether each model is actually reachable."""
+    info = service.system_info()
+    ocr = info["ocr"]
+    rows = [
+        (info["llm"]["configured"], "对话", _short(info["llm"]["model"])),
+        (info["embedding"]["configured"], "向量", _short(info["embedding"]["model"])),
+        (ocr["enabled"], "视觉", _short(ocr["model"])),
+        (info["rerank"]["configured"], "精排", _short(info["rerank"]["model"])),
+    ]
+    cells = "".join(
+        f"<div class='fb-status-row'><i class='fb-dot{'' if ok else ' off'}'></i>"
+        f"<span>{label}</span><b>{html.escape(name)}</b></div>"
+        for ok, label, name in rows
+    )
+    return f"<div class='fb-status'>{cells}</div>"
+
+
+def pro_hint_html() -> str:
+    return (
+        "<div class='fb-pro-hint'>"
+        f"<span class='fb-hint-icon'>{icon('lock', 13)}</span>"
+        "<div><b>页级诊断</b>与<b>检索指标</b>属于专业视图。"
+        "切到增强检索后解锁完整流水线、精排日志与评测。</div></div>"
+    )
+
+
+def page_head_html(title: str, desc: str) -> str:
+    return (
+        "<div class='fb-page-head'>"
+        f"<div class='fb-page-title'>{html.escape(title)}</div>"
+        f"<div class='fb-page-desc'>{html.escape(desc)}</div></div>"
+    )
+
+
+def chat_head_html() -> str:
+    return (
+        "<div class='fb-chat-head'>"
+        f"<div class='fb-chat-avatar'>{icon('chat', 18)}</div>"
+        "<div><div class='fb-chat-name'>文档问答<span class='fb-live'>在线</span></div>"
+        "<div class='fb-chat-meta'>回答只依据命中的块，每个结论都带引用编号</div></div>"
+        "</div>"
+    )
+
+
+def mode_badge_html(mode: str) -> str:
+    if mode == "enhanced":
+        return (
+            "<span class='fb-badge blue'>增强检索</span>"
+            "<div class='fb-badge-note'>改写 + 精排已启用</div>"
+        )
+    return (
+        "<span class='fb-badge'>快速检索</span>"
+        "<div class='fb-badge-note'>两路并行，直接作答</div>"
+    )
+
+
+def composer_hint_html() -> str:
+    return (
+        "<div class='fb-composer-hint'>"
+        "<kbd>Enter</kbd> 发送　<kbd>Shift</kbd>+<kbd>Enter</kbd> 换行　"
+        "<span class='fb-sep'>·</span> 范围留空即检索全部文档"
+        "</div>"
+    )
+
+
+NAV_ITEMS = [
+    ("chat", "对话"),
+    ("docs", "文档与解析"),
+    ("chunks", "分块地图"),
+    ("pages", "页级诊断"),
+    ("text", "原文核对"),
+    ("metrics", "检索指标"),
+    ("system", "运行状态"),
+]
+PRO_PANELS = {"pages", "metrics"}
+
+
+THEME = gr.themes.Base(
+    font=[gr.themes.GoogleFont("Inter"), "ui-sans-serif", "system-ui", "sans-serif"],
+    primary_hue="blue",
+    neutral_hue="gray",
+    radius_size=gr.themes.sizes.radius_sm,
+    spacing_size=gr.themes.sizes.spacing_sm,
+)
+
+
+def build_ui(service: Service) -> gr.Blocks:
+    vision_note = settings.vision_state[1]
+
+    # Gradio 6 takes theme/css/head at mount time, not at Blocks() time. The
+    # app mounts through app.main.gr_mount, which passes THEME / CSS / HEAD.
+    with gr.Blocks(title=f"文档助手 v{VERSION}") as demo:
         doc_state = gr.State(None)
         page_state = gr.State([])
         chunk_state = gr.State([])
         source_state = gr.State([])
         history_state = gr.State([])
 
-        # ---------------- 文档工作台 ----------------
-        with gr.Tab("① 文档工作台"):
-            flow = gr.HTML(flow_html(step_states(None, [])))
+        with gr.Row(elem_id="fb-shell"):
+            # ───────────────────────── left rail ─────────────────────────
+            with gr.Column(scale=0, min_width=268, elem_id="fb-rail"):
+                gr.HTML(brand_html())
+                gr.HTML("<div class='fb-cap'>检索强度</div>")
+                mode = gr.Radio(
+                    choices=MODE_CHOICES, value="fast", show_label=False,
+                    container=False, elem_id="fb-mode",
+                )
+                gr.HTML("<div class='fb-cap fb-cap-row'>工作区</div>")
+                with gr.Column(elem_id="fb-nav"):
+                    nav_chat = gr.Button("对话", variant="primary", elem_id="nav-chat")
+                    nav_docs = gr.Button("文档与解析", elem_id="nav-docs")
+                    nav_chunks = gr.Button("分块地图", elem_id="nav-chunks")
+                    nav_pages = gr.Button("页级诊断", elem_id="nav-pages", elem_classes=["fb-pro"])
+                    nav_text = gr.Button("原文核对", elem_id="nav-text")
+                    nav_metrics = gr.Button("检索指标", elem_id="nav-metrics", elem_classes=["fb-pro"])
+                    nav_system = gr.Button("运行状态", elem_id="nav-system")
+                gr.HTML(pro_hint_html())
+                gr.HTML(rail_status_html(service))
 
-            with gr.Tabs():
-                # ---- 1. 上传建索引 ----
-                with gr.Tab(STEP_LABELS["upload"]):
-                    with gr.Row():
+            # ───────────────────────── main column ─────────────────────────
+            with gr.Column(scale=1, elem_id="fb-main"):
+                flow = gr.HTML(flow_html(step_states(None, [])), elem_id="fb-flowbar")
+
+                # ---- 对话 ----
+                with gr.Column(visible=True, elem_id="panel-chat") as panel_chat:
+                    with gr.Row(elem_id="fb-chatpage"):
+                        with gr.Column(scale=1, elem_id="fb-chatcard"):
+                            with gr.Row(elem_id="fb-chat-headrow"):
+                                gr.HTML(chat_head_html())
+                                chat_scope = gr.Dropdown(
+                                    choices=_doc_choices(service), value=[], multiselect=True,
+                                    show_label=True, label="检索范围（留空＝全部文档）",
+                                    elem_id="fb-scope",
+                                )
+                                mode_badge = gr.HTML(mode_badge_html("fast"))
+                            chatbot = gr.Chatbot(
+                                height=460, layout="bubble", show_label=False,
+                                container=False, group_consecutive_messages=False,
+                                elem_id="fb-chat",
+                                placeholder=(
+                                    "先上传文档，或直接提问。\n"
+                                    "试试：付款账期最长是多少天？· 供应商准入需要什么材料？"
+                                ),
+                            )
+                            answer_meta = gr.Markdown(elem_id="fb-answer-meta")
+                            with gr.Row(elem_id="fb-composer"):
+                                chat_input = gr.Textbox(
+                                    show_label=False, container=False, lines=1, max_lines=5,
+                                    placeholder="问点什么，例如：付款账期最长是多少天？",
+                                    elem_id="fb-input",
+                                )
+                                send_btn = gr.Button("发送", elem_id="fb-send")
+                                clear_btn = gr.Button("清空", elem_id="fb-clear")
+                            gr.HTML(composer_hint_html())
+
+                        with gr.Column(scale=0, min_width=340, elem_id="fb-side"):
+                            trace = gr.HTML(render_trace(plan_steps("fast"), "fast"))
+                            hit_map = gr.HTML(chunk_map_html([], title="命中块"))
+                            with gr.Accordion("命中列表与原文", open=False):
+                                source_table = gr.Dataframe(
+                                    headers=SOURCE_HEADERS, interactive=False, wrap=True,
+                                    label="命中列表",
+                                )
+                                with gr.Row():
+                                    source_dd = gr.Dropdown(label="展开原文", choices=[], value=None, scale=3)
+                                    source_box = gr.Textbox(label="块原文", lines=8, max_lines=24, scale=9)
+                            with gr.Accordion("要不要用增强检索？", open=False):
+                                compare_btn = gr.Button("对比两种模式给这个问题")
+                                compare_md = gr.Markdown(
+                                    "上一次提问之后点这里：两种模式各检索一次（不调用生成模型），"
+                                    "直接看增强多带回了哪些页、又挤掉了哪些页。"
+                                )
+
+                # ---- 文档与解析 ----
+                with gr.Column(visible=False, elem_id="panel-docs") as panel_docs:
+                    gr.HTML(page_head_html(
+                        "文档与解析",
+                        "上传后立刻解析：先看清它被认成什么格式、每页有多少字，再决定要不要建索引。",
+                    ))
+                    with gr.Row(elem_id="fb-docs-grid"):
                         with gr.Column(scale=5):
                             upload = gr.File(
                                 label="上传文件（可多选）",
@@ -618,11 +774,8 @@ def build_ui(service: Service) -> gr.Blocks:
                             with gr.Accordion("顺便做增强识别（扫描页 OCR / 图表描述，会计费）", open=False):
                                 do_enhance = gr.Checkbox(label="入库后立即增强", value=False)
                                 limit_pages = gr.Slider(
-                                    label="最多调用模型的页数",
-                                    minimum=1,
-                                    maximum=60,
-                                    value=settings.ocr_max_pages,
-                                    step=1,
+                                    label="最多调用模型的页数", minimum=1, maximum=60,
+                                    value=settings.ocr_max_pages, step=1,
                                 )
                             upload_btn = gr.Button("解析并入库", variant="primary")
                             status = gr.Markdown(
@@ -631,150 +784,93 @@ def build_ui(service: Service) -> gr.Blocks:
                             )
                         with gr.Column(scale=7):
                             doc_table = gr.Dataframe(
-                                headers=DOC_HEADERS,
-                                value=_doc_rows(service),
-                                interactive=False,
-                                wrap=True,
-                                label="文档列表",
+                                headers=DOC_HEADERS, value=_doc_rows(service),
+                                interactive=False, wrap=True, label="文档列表",
                             )
-                    with gr.Row():
-                        doc_dd = gr.Dropdown(
-                            label="当前文档", choices=_doc_choices(service), value=None, scale=6
-                        )
+                    with gr.Row(elem_id="fb-toolbar"):
+                        doc_dd = gr.Dropdown(label="当前文档", choices=_doc_choices(service), value=None, scale=3)
                         chunk_size = gr.Slider(
                             label="块长上限（字）", minimum=200, maximum=1200,
                             value=settings.chunk_size, step=50, scale=4,
                         )
-                        reindex_btn = gr.Button("重建索引", scale=2)
+                        reindex_btn = gr.Button("重建索引", scale=1)
                         delete_btn = gr.Button("删除", variant="stop", scale=1)
-
-                # ---- 2. 解析结果 ----
-                with gr.Tab(STEP_LABELS["parse"]):
-                    gr.Markdown(
-                        "解析决定后面一切：这一页告诉你文件被认成了什么格式、每页有多少文字、"
-                        "哪些页会被当成扫描件或表格。"
-                    )
-                    parse_summary = gr.Markdown("选择文档后显示。")
-                    parse_strip = gr.HTML("")
+                    with gr.Row(elem_id="fb-parse-grid"):
+                        with gr.Column():
+                            parse_summary = gr.Markdown("选择文档后显示。")
+                        with gr.Column():
+                            parse_strip = gr.HTML("")
                     parse_note = gr.Markdown("")
 
-                # ---- 3. 分块地图 ----
-                with gr.Tab(STEP_LABELS["chunks"]):
-                    gr.Markdown(
-                        "每个块都是一次检索的最小单位。条形长度＝字数，颜色＝块类型；"
-                        "上方页轴显示全文字量分布，问答后同一张图会把被引用的块标红。"
-                    )
+                # ---- 分块地图 ----
+                with gr.Column(visible=False, elem_id="panel-chunks") as panel_chunks:
+                    gr.HTML(page_head_html(
+                        "分块地图",
+                        "每个块都是检索的最小单位。条形长度＝字数，颜色＝块类型；"
+                        "问答后被引用的块会标红并挂上引用序号。",
+                    ))
                     chunk_summary = gr.Markdown()
                     chunk_map = gr.HTML(chunk_map_html([]))
-                    with gr.Row():
+                    with gr.Row(elem_id="fb-chunk-grid"):
                         chunk_dd = gr.Dropdown(label="查看块", choices=[], value=None, scale=3)
                         chunk_box = gr.Textbox(label="块全文", lines=8, max_lines=24, scale=9)
 
-                # ---- 4. 页级诊断 ----
-                with gr.Tab(STEP_LABELS["pages"]):
-                    gr.Markdown(
-                        "扫描页会走 OCR，表格页会走 pdfplumber 精查，图形页会走图注模型——"
-                        "这里的标记就是路由依据。"
-                    )
+                # ---- 页级诊断（专业）----
+                with gr.Column(visible=False, elem_id="panel-pages") as panel_pages:
+                    gr.HTML(page_head_html(
+                        "页级诊断",
+                        "扫描页走 OCR、表格页走精排、图形页走图注模型——这张表就是路由依据。",
+                    ))
                     page_table = gr.Dataframe(
                         headers=PAGE_HEADERS, interactive=False, wrap=True,
                         label="每页的文本量与结构信号",
                     )
 
-                # ---- 5. 原文查看 ----
-                with gr.Tab(STEP_LABELS["text"]):
-                    with gr.Row():
+                # ---- 原文核对 ----
+                with gr.Column(visible=False, elem_id="panel-text") as panel_text:
+                    gr.HTML(page_head_html(
+                        "原文核对",
+                        "逐页对照识别结果。哪一页读错了，问题就出在这里。",
+                    ))
+                    with gr.Row(elem_id="fb-text-grid"):
                         view_dd = gr.Dropdown(label="页码", choices=[], value=None, scale=2)
                         page_box = gr.Textbox(label="单页原文", lines=18, max_lines=40, scale=10)
 
-                # ---- 6. 检索指标 ----
-                with gr.Tab(STEP_LABELS["metrics"]):
-                    gr.Markdown(
-                        "用 `eval/golden.jsonl` 里带标注页码的题目，在**这份文档**上分别跑两种模式，"
-                        "只做检索、不调用生成模型。命中率回答「找得到吗」，MRR 回答「排得靠前吗」。"
-                    )
-                    with gr.Row():
-                        metrics_btn = gr.Button("跑一次两模式评测", variant="primary", scale=2)
+                # ---- 检索指标（专业）----
+                with gr.Column(visible=False, elem_id="panel-metrics") as panel_metrics:
+                    gr.HTML(page_head_html(
+                        "检索指标",
+                        "用 eval/golden.jsonl 里带标注页码的题目，在这份文档上分别跑两种模式，"
+                        "只做检索、不调用生成模型。命中率回答「找得到吗」，MRR 回答「排得靠前吗」。",
+                    ))
+                    with gr.Row(elem_id="fb-metrics-bar"):
+                        metrics_btn = gr.Button("跑一次两模式评测", variant="primary", scale=1)
                         metrics_scope = gr.Dropdown(
                             label="文档范围（留空 = 全部）",
-                            choices=_doc_choices(service),
-                            multiselect=True,
-                            value=[],
-                            scale=6,
+                            choices=_doc_choices(service), multiselect=True, value=[], scale=4,
                         )
                     metrics_md = gr.Markdown(
                         "还没有跑过。示例库上的参考值：快速 MRR 0.972、增强 MRR 1.000（21 题）。"
                     )
 
-            with gr.Accordion("运行状态与用量", open=False):
-                with gr.Row():
-                    key_box = gr.Textbox(
-                        label="临时模型 Key（只存内存，不落盘；重启失效）",
-                        type="password",
-                        placeholder="sk-...",
-                        scale=8,
-                    )
-                    key_btn = gr.Button("应用", scale=1)
-                    sys_btn = gr.Button("刷新状态", scale=2)
-                key_md = gr.Markdown(
-                    "克隆仓库后没有 `.env` 也能用：在这里贴一次 Key 即可。"
-                    "问答、向量、精排、视觉共用这一把，长期使用建议写进 `.env` 的 `SILICONFLOW_API_KEY`。"
-                )
-                sys_md = gr.Markdown(_system_markdown(service))
-
-        # ---------------- 提问 ----------------
-        with gr.Tab("② 提问"):
-            with gr.Row():
-                mode = gr.Radio(
-                    label="检索方式",
-                    choices=MODE_CHOICES,
-                    value="fast",
-                    scale=5,
-                )
-                chat_scope = gr.Dropdown(
-                    label="范围（留空＝全部文档）",
-                    choices=_doc_choices(service),
-                    multiselect=True,
-                    value=[],
-                    scale=4,
-                )
-            gr.Markdown(
-                "**快速检索**：两路检索并行、按名次融合后直接作答，约 1 秒出首字。\n\n"
-                "**增强检索**：先补全追问，再把候选池放大一倍交给交叉编码器重排，"
-                "多花一次改写和一次精排的时间。不确定时先用下面的「对比两种模式」。"
-            )
-
-            with gr.Row():
-                with gr.Column(scale=6):
-                    chatbot = gr.Chatbot(label="对话", height=420, show_label=True)
-                    with gr.Row():
-                        chat_input = gr.Textbox(
-                            label="问题",
-                            placeholder="例如：付款账期最长是多少天？",
-                            scale=9,
-                            container=True,
+                # ---- 运行状态 ----
+                with gr.Column(visible=False, elem_id="panel-system") as panel_system:
+                    gr.HTML(page_head_html(
+                        "运行状态",
+                        "模型是否就绪、索引有多大、这个会话花了多少 token，都在这里。",
+                    ))
+                    with gr.Row(elem_id="fb-keybar"):
+                        key_box = gr.Textbox(
+                            label="临时模型 Key（只存内存，不落盘；重启失效）",
+                            type="password", placeholder="sk-...", scale=8,
                         )
-                        send_btn = gr.Button("发送", variant="primary", scale=1)
-                        clear_btn = gr.Button("清空", scale=1)
-                with gr.Column(scale=6):
-                    trace = gr.HTML(render_trace(plan_steps("fast"), "fast"))
-
-            answer_meta = gr.Markdown()
-            with gr.Accordion("本次命中的块", open=True):
-                hit_map = gr.HTML(chunk_map_html([]))
-                source_table = gr.Dataframe(
-                    headers=SOURCE_HEADERS, interactive=False, wrap=True, label="命中列表"
-                )
-                with gr.Row():
-                    source_dd = gr.Dropdown(label="展开原文", choices=[], value=None, scale=2)
-                    source_box = gr.Textbox(label="块原文", lines=8, max_lines=24, scale=10)
-
-            with gr.Accordion("要不要用增强检索？", open=False):
-                compare_btn = gr.Button("对比两种模式给这个问题", scale=2)
-                compare_md = gr.Markdown(
-                    "上一次提问之后点这里：两种模式各检索一次（不调用生成模型），"
-                    "直接看增强多带回了哪些页、又挤掉了哪些页。"
-                )
+                        key_btn = gr.Button("应用", scale=1)
+                        sys_btn = gr.Button("刷新状态", scale=1)
+                    key_md = gr.Markdown(
+                        "克隆仓库后没有 `.env` 也能用：在这里贴一次 Key 即可。"
+                        "问答、向量、精排、视觉共用这一把，长期使用建议写进 `.env` 的 `SILICONFLOW_API_KEY`。"
+                    )
+                    sys_md = gr.Markdown(_system_markdown(service))
 
         # ================= handlers =================
 
@@ -974,7 +1070,14 @@ def build_ui(service: Service) -> gr.Blocks:
             ]
 
         def on_mode_change(mode_value):
-            return render_trace(plan_steps(mode_value), mode_value)
+            return render_trace(plan_steps(mode_value), mode_value), mode_badge_html(mode_value)
+
+        def on_nav(target):
+            """Switch panels and move the highlight. Purely presentational."""
+            return (
+                [_update(variant="primary" if key == target else "secondary") for key, _ in NAV_ITEMS]
+                + [_update(visible=(key == target)) for key, _ in NAV_ITEMS]
+            )
 
         def on_chat(message, history, mode_value, scope):
             history = list(history or [])
@@ -1024,7 +1127,7 @@ def build_ui(service: Service) -> gr.Blocks:
                     render_trace([steps[k] for k in order], mode_value),
                     meta_md,
                     _source_rows(sources),
-                    chunk_map_html(pool, sources) if (show_map and sources) else chunk_map_html([]),
+                    chunk_map_html(pool, sources, title="命中块") if (show_map and sources) else chunk_map_html([]),
                     history,
                     sources,
                     _update(choices=_source_choices(sources), value=None),
@@ -1164,7 +1267,7 @@ def build_ui(service: Service) -> gr.Blocks:
                         ]
                         yield (
                             history, "", render_trace([steps[k] for k in order], mode_value),
-                            meta_md, _source_rows(sources), chunk_map_html(pool, sources), history,
+                            meta_md, _source_rows(sources), chunk_map_html(pool, sources, title="命中块"), history,
                             sources, _update(choices=_source_choices(sources), value=None),
                         )
                         return
@@ -1189,7 +1292,7 @@ def build_ui(service: Service) -> gr.Blocks:
                             render_trace([steps[k] for k in order], mode_value),
                             meta_md,
                             _source_rows(sources),
-                            chunk_map_html(pool, sources),
+                            chunk_map_html(pool, sources, title="命中块"),
                             history,
                             sources,
                             _update(choices=_source_choices(sources), value=None),
@@ -1201,13 +1304,14 @@ def build_ui(service: Service) -> gr.Blocks:
                 history = history + [{"role": "assistant", "content": f"处理失败：{exc}"}]
                 yield (
                     history, "", render_trace([steps[k] for k in order], mode_value), meta_md,
-                    _source_rows(sources), chunk_map_html(pool, sources), history,
+                    _source_rows(sources), chunk_map_html(pool, sources, title="命中块"), history,
                     sources, _update(choices=_source_choices(sources), value=None),
                 )
 
         def on_clear(mode_value):
             return (
-                [], "", render_trace(plan_steps(mode_value), mode_value), "", [], chunk_map_html([]),
+                [], "", render_trace(plan_steps(mode_value), mode_value), "", [],
+                chunk_map_html([], title="命中块"),
                 [], [], _update(choices=[], value=None),
             )
 
@@ -1299,7 +1403,17 @@ def build_ui(service: Service) -> gr.Blocks:
             show_progress=True,
         )
         chunk_dd.change(fn=on_chunk_view, inputs=[chunk_dd, chunk_state], outputs=chunk_box)
-        mode.change(fn=on_mode_change, inputs=[mode], outputs=trace)
+        mode.change(fn=on_mode_change, inputs=[mode], outputs=[trace, mode_badge])
+
+        _nav_buttons = [nav_chat, nav_docs, nav_chunks, nav_pages, nav_text, nav_metrics, nav_system]
+        _nav_panels = [panel_chat, panel_docs, panel_chunks, panel_pages,
+                       panel_text, panel_metrics, panel_system]
+        for (key, _), button in zip(NAV_ITEMS, _nav_buttons):
+            button.click(
+                fn=lambda target=key: on_nav(target),
+                inputs=None,
+                outputs=_nav_buttons + _nav_panels,
+            )
         metrics_btn.click(
             fn=on_metrics, inputs=[metrics_scope], outputs=metrics_md, show_progress=True
         )

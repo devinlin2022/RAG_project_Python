@@ -22,7 +22,8 @@ from fastapi import FastAPI
 from app.api import public, router
 from app.auth import setup_logging
 from app.state import get_service
-from app.ui import build_ui
+from app.style import CSS, HEAD
+from app.ui import THEME, build_ui
 from rag.config import VERSION, settings
 
 setup_logging()
@@ -76,7 +77,15 @@ def create_app() -> FastAPI:
 def gr_mount(api: FastAPI, service):
     import gradio as gr
 
-    return gr.mount_gradio_app(api, build_ui(service), path="/", auth=settings.ui_auth)
+    return gr.mount_gradio_app(
+        api,
+        build_ui(service),
+        path="/",
+        auth=settings.ui_auth,
+        theme=THEME,
+        css=CSS,
+        head=HEAD,
+    )
 
 
 app = create_app()

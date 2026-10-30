@@ -7,7 +7,9 @@ pytest.importorskip("gradio")
 pytest.importorskip("pydantic_settings")
 
 from app.ui import (  # noqa: E402
+    NAV_ITEMS,
     PLAN_STEPS,
+    PRO_PANELS,
     STEPS,
     _source_rows,
     build_ui,
@@ -22,7 +24,7 @@ from app.ui import (  # noqa: E402
 from rag.service import Service  # noqa: E402
 from rag.store.db import Database  # noqa: E402
 
-TABS = ("① 文档工作台", "② 提问")
+NAV_KEYS = ["chat", "docs", "chunks", "pages", "text", "metrics", "system"]
 
 
 @pytest.fixture
@@ -35,14 +37,12 @@ def test_ui_builds(demo):
     assert len(demo.blocks) > 40
 
 
-def test_both_tabs_exist(demo):
-    labels = [
-        getattr(block, "label", None)
-        for block in demo.blocks.values()
-        if isinstance(getattr(block, "label", None), str)
-    ]
-    for expected in TABS:
-        assert expected in labels, f"缺少标签页 {expected}"
+def test_navigation_separates_business_and_pro_views():
+    """Business users get three pages; the pro pages unlock with enhanced mode."""
+    assert [key for key, _ in NAV_ITEMS] == NAV_KEYS
+    assert PRO_PANELS == {"pages", "metrics"}
+    labels = dict(NAV_ITEMS)
+    assert labels["chat"] == "对话" and labels["pages"] == "页级诊断"
 
 
 def test_source_rows_tolerate_missing_scores():
@@ -108,7 +108,8 @@ def test_trace_shows_running_and_done_states():
     )
     assert "向量化查询" in page
     assert "1024 维" in page
-    assert "rt-spin" in page  # the spinner keyframe is present for running steps
+    assert "fb-step running" in page  # the running row carries the spinner dot
+    assert "fb-progress" in page      # and the whole card has a progress bar
 
 
 def test_trace_placeholder_names_the_steps_of_that_mode():
