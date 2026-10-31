@@ -493,6 +493,36 @@ html[data-fb-mode="fast"] #fb-rail .fb-pro-hint{ display:flex; }
 #fb-chat .message.user a{ color:#fff !important; }
 #fb-chat .panel, #fb-chat .bubble-border{ display:none !important; }
 
+/* 首页上传：一行放下，别把聊天区挤没了 */
+#fb-chat-upload{
+  display:flex !important; flex-wrap:nowrap !important; align-items:stretch !important;
+  gap:8px !important; margin:0 14px 6px !important;
+}
+#fb-chat-upload > *{ min-width:0 !important; }
+#fb-chat-drop{ flex:1 1 0 !important; min-width:0 !important; }
+#fb-chat-drop > .block{ width:100% !important; }
+/* Gradio 的文件组件默认高 119px（图标 + "or" + 两行字），压成一条 */
+#fb-chat-drop .upload-container{
+  padding:6px 10px !important; min-height:0 !important; gap:8px !important;
+  border:1px dashed var(--fb-border-2) !important; border-radius:12px !important;
+  background:var(--fb-surface-2) !important;
+}
+#fb-chat-drop .upload-container .wrap{ height:auto !important; min-height:0 !important; }
+#fb-chat-drop .icon-wrap svg{ width:18px !important; height:18px !important; }
+#fb-chat-drop .or{ display:none !important; }
+#fb-chat-drop .wrap.default.full{ min-height:0 !important; }
+#fb-chat-drop label{ font-size:12px !important; color:var(--fb-ink-3) !important; margin-bottom:2px !important; }
+#fb-chat-drop .file-preview{ max-height:56px; overflow:auto; }
+#fb-chat-upload-btn{ flex:0 0 116px !important; height:auto !important; min-height:56px !important; }
+#fb-chat-note{ margin:0 14px !important; }
+#fb-chat-note .prose{ font-size:12px !important; }
+#fb-chat-note .prose ul{ margin:2px 0 6px !important; padding-left:16px; }
+
+/* 文档列表：折叠之后宽度变窄，字号收一点，别让文件名竖着排 */
+#fb-doc-table{ --cell-padding: 6px 8px; }
+#fb-doc-table table, #fb-doc-table td, #fb-doc-table th{ font-size:12px !important; }
+#fb-doc-table th{ white-space:nowrap !important; }
+
 /* composer */
 #fb-composer{
   display:flex !important; align-items:flex-end !important; gap:8px !important;

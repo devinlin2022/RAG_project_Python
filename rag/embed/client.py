@@ -7,7 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 
 from rag.config import settings
-from rag.net import post_json
+from rag.diagnose import explain_401, explain_404
+from rag.net import describe_status, post_json
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ log = logging.getLogger(__name__)
 # section that needs a breakpoint pays a failed round trip.
 _COOLDOWN_SECONDS = 300
 _disabled_until = 0.0
+_trip_reason = ""
 
 # Last observed usage, for the token panel. {"prompt_tokens": n, "requests": k}
 last_usage: dict = {}
@@ -25,9 +27,24 @@ class EmbedError(Exception):
 
 
 def _trip(reason: str) -> None:
-    global _disabled_until
+    global _disabled_until, _trip_reason
     _disabled_until = time.time() + _COOLDOWN_SECONDS
+    _trip_reason = reason
     log.warning("embedding paused for %ss: %s", _COOLDOWN_SECONDS, reason)
+
+
+def reset_breaker() -> None:
+    """Clear the cooldown. Called when the key changes: the old failure no longer applies."""
+    global _disabled_until, _trip_reason
+    _disabled_until = 0.0
+    _trip_reason = ""
+    log.info("embedding breaker reset")
+
+
+def breaker_state() -> tuple[bool, str, int]:
+    """(paused, reason, seconds_left) for the UI."""
+    left = int(max(0.0, _disabled_until - time.time()))
+    return left > 0, _trip_reason, left
 
 
 def embed_ready() -> bool:
@@ -52,7 +69,7 @@ def _embed_batch(items: list[str]) -> tuple[list[list[float]], int]:
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             payload,
             settings.llm_timeout,
-            min_interval=settings.ocr_min_interval,
+            min_interval=settings.http_min_interval,
             retries=settings.http_retries,
         )
     except requests.Timeout as exc:
@@ -60,14 +77,27 @@ def _embed_batch(items: list[str]) -> tuple[list[list[float]], int]:
     except Exception as exc:
         raise EmbedError(f"Embedding 请求失败：{exc}") from exc
 
-    if response.status_code in (401, 402):
+    if response.status_code in (401, 402, 403):
         _trip(f"HTTP {response.status_code}")
-        raise EmbedError(f"Embedding 不可用（{response.status_code}）：{response.text[:120]}")
+        detail = (
+            explain_401(settings.embed_base_url_resolved, api_key)
+            if response.status_code == 401
+            else f"当前站点 {settings.embed_base_url_resolved}"
+        )
+        raise EmbedError(
+            f"向量化不可用：{describe_status(response.status_code)}，{response.text[:100]}。{detail}"
+        )
     if response.status_code == 429:
-        raise EmbedError("Embedding 触发限流（429），请调小 EMBED_BATCH 或 EMBED_CONCURRENCY")
+        raise EmbedError(
+            "向量化触发限流（429）：调小 EMBED_CONCURRENCY，或把 HTTP_MIN_INTERVAL 调大（当前 "
+            f"{settings.http_min_interval}s）"
+        )
     if response.status_code == 404:
         _trip("model not found")
-        raise EmbedError(f"Embedding 模型不存在（404）：{settings.embed_model}")
+        raise EmbedError(
+            f"Embedding 模型不存在（404）：{settings.embed_model}。"
+            + explain_404(settings.embed_base_url_resolved, api_key, settings.embed_model, "embed")
+        )
     if response.status_code >= 400:
         raise EmbedError(f"Embedding 返回 {response.status_code}：{response.text[:200]}")
 
@@ -90,7 +120,11 @@ def embed_texts(texts: list[str], batch: int | None = None) -> list[list[float]]
     if not api_key:
         raise EmbedError("未配置 API Key，请在 .env 填写 SILICONFLOW_API_KEY")
     if time.time() < _disabled_until:
-        raise EmbedError("Embedding 已暂停（近期出现认证或余额错误），改按字符切分")
+        left = int(_disabled_until - time.time())
+        raise EmbedError(
+            f"Embedding 已暂停（{_trip_reason or '近期认证或余额错误'}），"
+            f"{left} 秒后自动重试；换 Key 后立即恢复"
+        )
 
     size = batch or settings.embed_batch
     groups = _batches(texts, size)

@@ -10,7 +10,8 @@ import logging
 import requests
 
 from rag.config import settings
-from rag.net import post_json
+from rag.diagnose import explain_401, explain_404
+from rag.net import describe_status, post_json
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +47,12 @@ def rerank(query: str, documents: list[str], top_n: int | None = None) -> list[t
     }
     try:
         response = post_json(
-            settings.rerank_url, headers, payload, settings.rerank_timeout, retries=1
+            settings.rerank_url,
+            headers,
+            payload,
+            settings.rerank_timeout,
+            min_interval=settings.http_min_interval,
+            retries=settings.http_retries,
         )
     except requests.RequestException as exc:
         raise RerankError(f"精排请求失败：{exc}") from exc
@@ -54,10 +60,24 @@ def rerank(query: str, documents: list[str], top_n: int | None = None) -> list[t
     if response.status_code == 404:
         raise RerankError(
             f"精排模型不存在（404）：{settings.rerank_model}。"
-            "请在平台模型广场核对 ID，或设置 RERANK_ENABLED=false"
+            + explain_404(settings.llm_url, settings.llm_api_key, settings.rerank_model, "rerank")
+            + "也可以设 RERANK_ENABLED=false 先关掉精排。"
         )
-    if response.status_code in (401, 402):
-        raise RerankError(f"精排不可用（{response.status_code}）：{response.text[:120]}")
+    if response.status_code in (401, 402, 403):
+        explain = (
+            explain_401(settings.llm_url, settings.llm_api_key)
+            if response.status_code == 401
+            else f"当前站点 {settings.llm_url}"
+        )
+        raise RerankError(
+            f"精排不可用：{describe_status(response.status_code)}，{response.text[:100]}。"
+            f"当前 Key 尾号 {settings.llm_api_key.strip()[-4:] or '空'}。{explain}"
+        )
+    if response.status_code == 429:
+        raise RerankError(
+            "精排触发限流（429）：问答、向量、精排共用一个 Key，把 HTTP_MIN_INTERVAL 调大"
+            f"（当前 {settings.http_min_interval}s）或减少候选数（当前 {len(documents)} 条）"
+        )
     if response.status_code >= 400:
         raise RerankError(f"精排返回 {response.status_code}：{response.text[:160]}")
 

@@ -73,7 +73,8 @@ def vision_chat(png: bytes, prompt: str, model: str) -> OcrResult:
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             payload,
             settings.ocr_timeout,
-            min_interval=settings.ocr_min_interval,
+            # OCR_MIN_INTERVAL=0 means "no extra spacing beyond the global gate".
+            min_interval=max(settings.ocr_min_interval, settings.http_min_interval),
             retries=settings.http_retries,
         )
     except requests.Timeout as exc:

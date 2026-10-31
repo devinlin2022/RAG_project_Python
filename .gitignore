@@ -7,6 +7,7 @@ data/uploads/
 data/index/
 data/rag.sqlite
 data/rag.sqlite-*
+data/smoke-*.sqlite*
 eval/report.md
 .pytest_cache/
 .idea/

@@ -7,6 +7,7 @@ from typing import Iterator
 import requests
 
 from rag.config import settings
+from rag.net import post_json
 
 log = logging.getLogger(__name__)
 
@@ -27,18 +28,33 @@ def _headers() -> dict:
 def _explain(response) -> LLMError:
     detail = response.text.strip().replace("\n", " ")[:200]
     if response.status_code == 401:
+        from rag.diagnose import explain_401
+
         return LLMError(
             f"API Key 被拒绝（401）：{detail or '平台未说明原因'}。"
             f"当前 key 尾号 {settings.llm_api_key.strip()[-4:] or '空'}、"
             f"地址 {settings.llm_url}、模型 {settings.llm_model}。"
+            f"{explain_401(settings.llm_url, settings.llm_api_key)}"
             "问答、向量、精排、视觉共用 SILICONFLOW_API_KEY，改一处即可。"
         )
     if response.status_code == 402:
-        return LLMError(f"账户余额不足（402）：{detail}")
+        return LLMError(
+            f"账户余额不足（402）：{detail}。"
+            f"当前用的是 {settings.llm_url}，充值要在同一个站点充；"
+            "另一个站点的余额不会共享。"
+        )
+    if response.status_code == 429:
+        return LLMError(
+            "触发限流（429）：并发请求过多，同一把 Key 的问答、向量、精排共用配额。"
+            f"把 HTTP_MIN_INTERVAL 调大（当前 {settings.http_min_interval}s）或稍等几秒重试"
+        )
     if response.status_code == 404:
+        from rag.diagnose import explain_404
+
         return LLMError(
             f"接口或模型不存在（404）：{detail}。"
-            "请核对 SILICONFLOW_BASE_URL 是否以 /v1 结尾，以及 LLM_MODEL 是否为平台上的完整模型 ID"
+            + explain_404(settings.llm_url, settings.llm_api_key, settings.llm_model, "chat")
+            + "另外确认 SILICONFLOW_BASE_URL 以 /v1 结尾。"
         )
     return LLMError(f"HTTP {response.status_code}：{detail}")
 
@@ -59,11 +75,13 @@ def chat(
     }
 
     try:
-        response = requests.post(
+        response = post_json(
             settings.chat_completions_url,
-            json=payload,
-            headers=headers,
-            timeout=settings.llm_timeout,
+            headers,
+            payload,
+            settings.llm_timeout,
+            min_interval=settings.http_min_interval,
+            retries=settings.http_retries,
         )
     except requests.exceptions.RequestException as exc:
         raise LLMError(f"网络请求失败：{exc}") from exc
@@ -92,11 +110,14 @@ def chat(
 
 
 def _post_stream(payload: dict, headers: dict):
-    return requests.post(
+    # stream=True only reads headers, so a retry here never replays a partial body.
+    return post_json(
         settings.chat_completions_url,
-        json=payload,
-        headers=headers,
-        timeout=settings.llm_timeout,
+        headers,
+        payload,
+        settings.llm_timeout,
+        min_interval=settings.http_min_interval,
+        retries=settings.http_retries,
         stream=True,
     )
 

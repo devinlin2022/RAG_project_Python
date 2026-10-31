@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     ocr_concurrency: int = 3
     ocr_min_interval: float = 0.0
     http_retries: int = 3
+    # Seconds between any two platform calls, across every thread. The embed,
+    # rerank and vision paths each run a thread pool; without a shared gate
+    # three at once looks like a burst and comes back 429. 0 disables pacing.
+    http_min_interval: float = 0.12
     enhance_max_seconds: int = 600
 
     # ── embeddings ──────────────────────────────────────────────────

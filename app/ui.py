@@ -15,6 +15,8 @@ import gradio as gr
 from app.style import CSS, HEAD
 from app.style import _ICON_PATHS as ICON_PATHS
 from rag.config import VERSION, settings
+from rag.diagnose import reset_cache as reset_diagnosis
+from rag.embed.client import breaker_state, reset_breaker
 from rag.ingest.extract import SUPPORTED_EXT
 from rag.ingest.loader import page_text as page_text_view
 from rag.service import Service, ServiceError
@@ -22,7 +24,7 @@ from rag.utils import format_pages
 
 log = logging.getLogger(__name__)
 
-DOC_HEADERS = ["ID", "文件名", "格式", "页", "字符", "块", "已增强", "状态"]
+DOC_HEADERS = ["文件名", "格式", "页", "块", "状态"]
 PAGE_HEADERS = ["页", "字符", "表格", "列结构", "图像", "扫描", "表格页", "图形页"]
 SOURCE_HEADERS = ["#", "文件", "页", "类型", "融合分", "向量", "BM25", "精排", "预览"]
 COMPARE_HEADERS = ["模式", "命中块", "覆盖页", "页覆盖率", "首位分", "首位优势", "精排", "耗时"]
@@ -85,13 +87,12 @@ def _doc_choices(service: Service) -> list[tuple[str, str]]:
 def _doc_rows(service: Service) -> list[list]:
     return [
         [
-            row["id"],
+            # 业务视角只看"这份文档进来了没有、切了几块"。
+            # 内部 ID、字符数、是否增强放到「解析明细」里，别挤在这张表上。
             row["filename"],
             row["format"],
             row["pages"],
-            row["chars"],
             row["chunks"],
-            "是" if row["enhanced"] else "",
             "已建索引" if row["indexed_at"] != "—" else "待建索引",
         ]
         for row in service.list_documents()
@@ -681,6 +682,7 @@ def build_ui(service: Service) -> gr.Blocks:
         chunk_state = gr.State([])
         source_state = gr.State([])
         history_state = gr.State([])
+        gen_state = gr.State([])
 
         with gr.Row(elem_id="fb-shell"):
             # ───────────────────────── left rail ─────────────────────────
@@ -719,6 +721,18 @@ def build_ui(service: Service) -> gr.Blocks:
                                     elem_id="fb-scope",
                                 )
                                 mode_badge = gr.HTML(mode_badge_html("fast"))
+                            # 空库时这里就是入口：不摆一个上传框，用户不知道对话从哪开始。
+                            with gr.Row(elem_id="fb-chat-upload"):
+                                chat_upload = gr.File(
+                                    label="先把文档放进来：PDF / Word / PPT / Excel / Markdown，可多选",
+                                    file_types=list(SUPPORTED_EXT),
+                                    file_count="multiple",
+                                    elem_id="fb-chat-drop",
+                                )
+                                chat_upload_btn = gr.Button(
+                                    "上传并入库", variant="primary", elem_id="fb-chat-upload-btn"
+                                )
+                            chat_note = gr.Markdown(elem_id="fb-chat-note")
                             chatbot = gr.Chatbot(
                                 height=460, layout="bubble", show_label=False,
                                 container=False, group_consecutive_messages=False,
@@ -764,7 +778,7 @@ def build_ui(service: Service) -> gr.Blocks:
                         "上传后立刻解析：先看清它被认成什么格式、每页有多少字，再决定要不要建索引。",
                     ))
                     with gr.Row(elem_id="fb-docs-grid"):
-                        with gr.Column(scale=5):
+                        with gr.Column(scale=4):
                             upload = gr.File(
                                 label="上传文件（可多选）",
                                 file_types=list(SUPPORTED_EXT),
@@ -782,25 +796,33 @@ def build_ui(service: Service) -> gr.Blocks:
                                 "支持 PDF、Word、PPT、Excel、CSV、Markdown、TXT、HTML。"
                                 f"视觉模型当前：{settings.ocr_model}（{vision_note}）。"
                             )
-                        with gr.Column(scale=7):
-                            doc_table = gr.Dataframe(
-                                headers=DOC_HEADERS, value=_doc_rows(service),
-                                interactive=False, wrap=True, label="文档列表",
-                            )
-                    with gr.Row(elem_id="fb-toolbar"):
-                        doc_dd = gr.Dropdown(label="当前文档", choices=_doc_choices(service), value=None, scale=3)
-                        chunk_size = gr.Slider(
-                            label="块长上限（字）", minimum=200, maximum=1200,
-                            value=settings.chunk_size, step=50, scale=4,
-                        )
-                        reindex_btn = gr.Button("重建索引", scale=1)
-                        delete_btn = gr.Button("删除", variant="stop", scale=1)
-                    with gr.Row(elem_id="fb-parse-grid"):
-                        with gr.Column():
-                            parse_summary = gr.Markdown("选择文档后显示。")
-                        with gr.Column():
-                            parse_strip = gr.HTML("")
-                    parse_note = gr.Markdown("")
+                        with gr.Column(scale=8):
+                            # 默认只露文档列表；索引参数与解析明细收起来，
+                            # 免得非专业用户一进页面就被十来个数字吓回去。
+                            with gr.Accordion("文档列表", open=True):
+                                doc_table = gr.Dataframe(
+                                    headers=DOC_HEADERS, value=_doc_rows(service),
+                                    interactive=False, wrap=True, show_label=False,
+                                    elem_id="fb-doc-table",
+                                )
+                            with gr.Accordion("索引与维护（先选中一篇再操作）", open=False):
+                                with gr.Row(elem_id="fb-toolbar"):
+                                    doc_dd = gr.Dropdown(
+                                        label="当前文档", choices=_doc_choices(service), value=None, scale=3
+                                    )
+                                    chunk_size = gr.Slider(
+                                        label="块长上限（字）", minimum=200, maximum=1200,
+                                        value=settings.chunk_size, step=50, scale=4,
+                                    )
+                                    reindex_btn = gr.Button("重建索引", scale=1)
+                                    delete_btn = gr.Button("删除", variant="stop", scale=1)
+                            with gr.Accordion("解析明细（页数、字符量、路由依据）", open=False):
+                                with gr.Row(elem_id="fb-parse-grid"):
+                                    with gr.Column():
+                                        parse_summary = gr.Markdown("选择文档后显示。")
+                                    with gr.Column():
+                                        parse_strip = gr.HTML("")
+                                parse_note = gr.Markdown("")
 
                 # ---- 分块地图 ----
                 with gr.Column(visible=False, elem_id="panel-chunks") as panel_chunks:
@@ -840,15 +862,21 @@ def build_ui(service: Service) -> gr.Blocks:
                 with gr.Column(visible=False, elem_id="panel-metrics") as panel_metrics:
                     gr.HTML(page_head_html(
                         "检索指标",
-                        "用 eval/golden.jsonl 里带标注页码的题目，在这份文档上分别跑两种模式，"
-                        "只做检索、不调用生成模型。命中率回答「找得到吗」，MRR 回答「排得靠前吗」。",
+                        "在这份文档上分别跑两种模式，只做检索、不调用生成模型。"
+                        "命中率回答「找得到吗」，MRR 回答「排得靠前吗」。"
+                        "题目可以自动出：从每个块里生成一道只能靠该页回答的问题，页码就是标准答案。",
                     ))
                     with gr.Row(elem_id="fb-metrics-bar"):
-                        metrics_btn = gr.Button("跑一次两模式评测", variant="primary", scale=1)
+                        gen_btn = gr.Button("自动出题并评测", variant="primary", scale=2)
+                        gen_count = gr.Slider(
+                            label="题目数", minimum=3, maximum=20, value=8, step=1, scale=3
+                        )
                         metrics_scope = gr.Dropdown(
                             label="文档范围（留空 = 全部）",
                             choices=_doc_choices(service), multiselect=True, value=[], scale=4,
                         )
+                    gen_note = gr.Markdown(elem_id="fb-gen-note")
+                    metrics_btn = gr.Button("只跑 golden.jsonl（示例题集）", scale=1)
                     metrics_md = gr.Markdown(
                         "还没有跑过。示例库上的参考值：快速 MRR 0.972、增强 MRR 1.000（21 题）。"
                     )
@@ -1348,25 +1376,94 @@ def build_ui(service: Service) -> gr.Blocks:
                 return f"对比失败：{exc}"
             return compare_markdown(report)
 
-        def on_metrics(scope, progress=gr.Progress()):
-            doc_ids = scope or None
+        def _both_modes(doc_ids, questions, progress, base=0.0):
+            """两种模式各跑一次，共用同一批题目。返回 (markdown, 错误信息)。"""
             labels = {"fast": MODE_CHOICES[0][0], "enhanced": MODE_CHOICES[1][0]}
             parts: list[str] = []
             for index, mode_name in enumerate(("fast", "enhanced"), start=1):
-                progress(index / 3, desc=f"评测：{labels[mode_name]}")
+                progress(base + (1 - base) * index / 2, desc=f"评测：{labels[mode_name]}")
                 try:
-                    result = service.evaluate(top_k=5, mode=mode_name, doc_ids=doc_ids)
+                    result = service.evaluate(
+                        top_k=5, mode=mode_name, doc_ids=doc_ids, questions=questions or None
+                    )
                 except Exception as exc:
-                    return f"评测失败：{exc}"
+                    return "", f"评测失败：{exc}"
                 parts.append(f"**{labels[mode_name]}**　{eval_markdown(result)}")
+            return "\n\n".join(parts), ""
+
+        def on_metrics(scope, questions=None, progress=gr.Progress()):
+            body, error = _both_modes(scope or None, questions, progress, base=0.1)
+            if error:
+                return error
             progress(1.0, desc="完成")
             return (
-                "\n\n".join(parts)
+                body
                 + "\n\n> 两组数字用同一批题目、同一个 top_k，只有候选池宽度和精排开关不同，"
                 "所以差值可以直接读成「增强换来了什么」。"
             )
 
+        def on_generate(scope, count, progress=gr.Progress()):
+            """出题 → 立刻用同一批题跑两种模式。没有人工标注也能看到自己文档的真实数字。"""
+            doc_ids = scope or None
+            try:
+                bundle = service.generate_questions(
+                    doc_ids=doc_ids,
+                    limit=int(count),
+                    on_progress=lambda index, total, name: progress(
+                        index / max(total, 1) * 0.55, desc=f"出题 {index}/{total}：{name}"
+                    ),
+                )
+            except ServiceError as exc:
+                return f"出题失败：{exc}", "", []
+            except Exception as exc:
+                return f"出题失败：{exc}", "", []
+
+            questions = bundle["questions"]
+            if not questions:
+                return (
+                    "**一道题也没生成。** 模型没有返回可解析的 JSON——常见原因是 Key 无效（401）"
+                    "或额度不足。先去「运行状态」确认 Key，再回来点一次。",
+                    "", [],
+                )
+
+            pages = sorted({page for item in questions for page in item["pages"]})
+            note = (
+                f"已从本文档生成 **{len(questions)} 道题**，覆盖第 {format_pages(pages) or '—'} 页"
+                f"（{bundle['sampled']} 个块取样，{bundle['failed']} 个块没出成题）。\n\n"
+                + "\n".join(
+                    f"{index}. {item['q']}　<span class='fb-muted'>p.{item['pages'][0]}</span>"
+                    for index, item in enumerate(questions, start=1)
+                )
+            )
+
+            body, error = _both_modes(doc_ids, questions, progress, base=0.55)
+            if error:
+                return note, error, questions
+            progress(1.0, desc="完成")
+            return (
+                note,
+                body
+                + "\n\n> 标准答案是「这道题出自哪一页」，不是人写的参考答案——"
+                "所以命中率只说明检索有没有把那一页捞回来，不评价回答写得好不好。",
+                questions,
+            )
+
         # ================= bindings =================
+
+        def on_chat_upload(files, current, progress=gr.Progress()):
+            """首页那排上传：默认就建索引，不需要用户懂"入库/索引"两步。"""
+            result = on_upload(files, True, False, settings.ocr_max_pages, current, progress)
+            return (*result, result[0], _update(value=None))
+
+        chat_upload_btn.click(
+            fn=on_chat_upload,
+            inputs=[chat_upload, doc_state],
+            outputs=[
+                status, doc_table, doc_dd, doc_state, chunk_state, chunk_map,
+                chunk_summary, chunk_dd, chat_scope, flow, chat_note, chat_upload,
+            ],
+            show_progress=True,
+        )
 
         upload_btn.click(
             fn=on_upload,
@@ -1415,7 +1512,13 @@ def build_ui(service: Service) -> gr.Blocks:
                 outputs=_nav_buttons + _nav_panels,
             )
         metrics_btn.click(
-            fn=on_metrics, inputs=[metrics_scope], outputs=metrics_md, show_progress=True
+            fn=on_metrics, inputs=[metrics_scope, gen_state], outputs=metrics_md, show_progress=True
+        )
+        gen_btn.click(
+            fn=on_generate,
+            inputs=[metrics_scope, gen_count],
+            outputs=[gen_note, metrics_md, gen_state],
+            show_progress=True,
         )
 
         _chat_outputs = [
@@ -1447,9 +1550,14 @@ def build_ui(service: Service) -> gr.Blocks:
             settings.ocr_enabled = True
             if not settings.rerank_enabled:
                 settings.rerank_enabled = True
+            # 旧 Key 触发的熔断对新 Key 不成立，否则换完 Key 还得等 5 分钟
+            was_paused = breaker_state()[0]
+            reset_breaker()
+            reset_diagnosis()      # 旧的站点判断也可能已经不成立了
             return (
                 f"已应用 `{value[:6]}…{value[-4:]}`：问答、向量、精排、视觉都改用它。"
-                "重启后失效，若要长期生效请写进 `.env`。",
+                + ("已解除向量化的熔断，可以直接重试。" if was_paused else "")
+                + "重启后失效，若要长期生效请写进 `.env`。",
                 _system_markdown(service),
             )
 

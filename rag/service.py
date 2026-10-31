@@ -875,10 +875,12 @@ class Service:
         golden_path: str | Path | None = None,
         mode: str | None = None,
         doc_ids: list[str] | None = None,
+        questions: list[dict] | None = None,
     ) -> dict:
         from eval.run_eval import load_golden, run_questions
 
-        questions = load_golden(golden_path)
+        # 自动出的题和 golden.jsonl 走同一条评测路径，只是换了一组题目来源。
+        questions = load_golden(golden_path) if questions is None else questions
         picked = doc_ids if doc_ids is not None else self.doc_ids_matching(doc_pattern)
         rows, skipped = run_questions(
             self,
@@ -895,8 +897,29 @@ class Service:
 
         return {"rows": rows, "summary": summarize(rows, top_k), "skipped": skipped}
 
-    # ---------- system ----------
+    def generate_questions(
+        self,
+        doc_ids: list[str] | None = None,
+        limit: int = 10,
+        on_progress=None,
+    ) -> dict:
+        """从当前文档的块里出题，页面标注直接取块的起始页。
 
+        没有这一步，「检索指标」只能跑仓库自带的 demo 题：换一份文档就是一片空白，
+        而命中率的用处恰恰在于"我刚上传的这份，找得到吗"。
+        """
+        from eval.generate import generate_questions
+
+        records = [
+            record
+            for record in self.library.records
+            if doc_ids is None or record.doc_id in doc_ids
+        ]
+        if not records:
+            raise ServiceError("没有可用的块：先上传文档并建索引，再自动出题")
+        return generate_questions(records, limit=limit, on_progress=on_progress)
+
+    # ---------- system ----------
     def system_info(self) -> dict:
         return {
             "version": VERSION,
