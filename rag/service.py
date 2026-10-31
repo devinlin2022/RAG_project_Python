@@ -107,6 +107,9 @@ class Service:
                 "created_at": meta["created_at"],
                 "strategy": meta["strategy"],
                 "chunk_count": meta["chunk_count"],
+                # dim 是"这份文档到底有没有向量"的唯一凭据。库里有，取回时必须带上，
+                # 否则重启后每份文档都显示 0 维，看起来和"向量化没生效"完全一样。
+                "dim": meta.get("dim", 0),
                 "indexed_at": meta["indexed_at"],
                 "enhanced_at": meta["enhanced_at"],
                 "blocks": {
@@ -210,6 +213,7 @@ class Service:
                     "pages": doc["page_count"],
                     "chars": doc["chars"],
                     "chunks": doc.get("chunk_count", 0),
+                    "dim": doc.get("dim", 0),
                     "strategy": doc.get("strategy") or "—",
                     "indexed_at": doc.get("indexed_at") or "—",
                     "enhanced": bool(doc.get("enhanced_at")),
@@ -265,7 +269,10 @@ class Service:
         force: bool = False,
     ) -> dict:
         doc = self.get(doc_id)
-        if doc.get("chunk_count") and doc.get("indexed_at") and not force:
+        # 建索引时向量化要是正好挂了，这份文档就只有关键词检索。等 Key 修好以后
+        # 不能因为"已经建过索引"就一直跳过 —— 那样它永远补不上向量，增强检索对它无效。
+        needs_vectors = settings.embed_ready and not doc.get("dim")
+        if doc.get("chunk_count") and doc.get("indexed_at") and not force and not needs_vectors:
             return {
                 "doc_id": doc_id,
                 "chunks": doc["chunk_count"],

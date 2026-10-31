@@ -220,6 +220,39 @@ def test_documents_survive_a_restart(offline, sample_pdf, tmp_path):
     assert second.docs[doc["id"]]["page_count"] == 3
 
 
+def test_vector_dimension_survives_a_restart(offline, service, sample_pdf, tmp_path):
+    """维度不进内存就等于没存：重启后每份文档都显示 0 维，看着像向量化失效。"""
+    db_path = tmp_path / "dim.sqlite"
+    first = Service(Database(db_path))
+    doc, _ = first.ingest(sample_pdf)
+    info = first.index(doc["id"])
+    assert info["dim"] == 0  # offline 下没有向量
+
+    # 手工假装当初带向量建成过
+    first.docs[doc["id"]]["dim"] = 1024
+    first.docs[doc["id"]]["chunk_count"] = info["chunks"]
+    first.db.upsert_doc(first._meta(first.docs[doc["id"]]))
+
+    second = Service(Database(db_path))
+    assert second.docs[doc["id"]]["dim"] == 1024
+
+
+def test_index_backfills_vectors_after_the_key_comes_back(offline, service, sample_pdf, monkeypatch):
+    """Key 坏的时候建的索引只有关键词。Key 修好后不能一直跳过补向量。"""
+    doc, _ = service.ingest(sample_pdf)
+    first = service.index(doc["id"])
+    assert first["dim"] == 0 and service.library.stats()["vectors"] == 0
+
+    # Key 恢复：向量化可用
+    _embed_stub(monkeypatch, service)
+    monkeypatch.setattr(settings, "embed_api_key", "sk-test")
+
+    again = service.index(doc["id"])  # 没有 force
+    assert again["skipped"] is False, "维度为 0 时不应跳过，必须补算向量"
+    assert again["dim"] == 8
+    assert service.library.stats()["vectors"] > 0
+
+
 def test_page_qa_rejects_empty_page_selection(offline, service, sample_pdf):
     doc, _ = service.ingest(sample_pdf)
     with pytest.raises(PageAnswerError):

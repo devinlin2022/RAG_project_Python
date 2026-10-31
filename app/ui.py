@@ -93,7 +93,13 @@ def _doc_rows(service: Service) -> list[list]:
             row["format"],
             row["pages"],
             row["chunks"],
-            "已建索引" if row["indexed_at"] != "—" else "待建索引",
+            # 「已建索引」不等于向量可用：Key 出问题时块照样切，只是没有向量。
+            # 这两种状态外观必须能分开，否则用户会以为增强检索在用，其实在跑关键词。
+            (
+                "已建索引"
+                if row.get("dim")
+                else ("仅关键词" if row["indexed_at"] != "—" else "待建索引")
+            ),
         ]
         for row in service.list_documents()
     ]
@@ -126,10 +132,11 @@ def _doc_summary(doc: dict) -> str:
         flags.append(f"表格页 {len(doc['table_like_pages'])}（{format_pages(doc['table_like_pages'][:8])}）")
     if doc["figure_like_pages"]:
         flags.append(f"图形页 {len(doc['figure_like_pages'])}（{format_pages(doc['figure_like_pages'][:8])}）")
+    vector_note = f"{doc.get('dim', 0)} 维" if doc.get("dim") else "无向量（仅关键词检索）"
     return (
         f"**{doc['filename']}**　｜　{doc.get('format', '')}　｜　{doc['page_count']} 页"
         f"　｜　{doc['chars']:,} 字符　｜　{doc.get('chunk_count', 0)} 块"
-        f" / {doc.get('dim', 0)} 维\n\n"
+        f" / {vector_note}\n\n"
         + ("- " + "　".join(flags) + "\n" if flags else "- 文本层完整，未发现扫描页或表格页\n")
         + f"- 增强识别：{'已完成' if doc.get('enhanced_at') else '未运行'}"
     )

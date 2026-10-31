@@ -31,6 +31,29 @@ def check(label: str, ok: bool, detail: str = "") -> None:
         _failures.append(label)
 
 
+# 节流要量的是"客户端什么时候把请求发出去"。服务端记录的到达时间不行：
+# 假平台是本地线程，几个处理线程会被成批唤醒，20ms 的发送间隔在到达端能压成 3ms，
+# 于是这条断言会时好时坏——坏的时候不是节流坏了，是尺子坏了。
+_SEND_STAMPS: list[float] = []
+
+
+def install_send_spy() -> None:
+    import rag.net as net
+
+    original = net.requests.post
+
+    def spy(*args, **kwargs):
+        _SEND_STAMPS.append(time.monotonic())
+        return original(*args, **kwargs)
+
+    net.requests.post = spy
+
+
+def send_gaps() -> list[float]:
+    stamps = sorted(_SEND_STAMPS)
+    return [round(b - a, 3) for a, b in zip(stamps, stamps[1:])]
+
+
 def _configure(base_url: str, db_name: str) -> None:
     """必须在 import rag.config 之前设置：配置是模块级单例，导入即冻结。"""
     os.environ["SILICONFLOW_BASE_URL"] = base_url
@@ -111,12 +134,12 @@ def run_happy_path(platform) -> None:
 
     # ── 节流 ──
     print("\n[4] 请求节流")
-    gaps = platform.gaps("embed") + platform.gaps("chat")
+    gaps = send_gaps()
     interval = settings.http_min_interval
     if gaps:
-        # 客户端保证"两次发起至少隔 interval"，服务端看到的到达间隔会被调度吃掉几毫秒
-        check("相邻请求被拉开", min(gaps) >= interval * 0.5,
-              f"最小间隔 {min(gaps) * 1000:.0f}ms（设定 {interval * 1000:.0f}ms）")
+        check("相邻请求被拉开", min(gaps) >= interval * 0.9,
+              f"最小间隔 {min(gaps) * 1000:.0f}ms（设定 {interval * 1000:.0f}ms，"
+              f"共 {len(gaps) + 1} 次请求）")
 
     service.delete(doc_id)
 
@@ -164,6 +187,7 @@ def main() -> int:
     db_name = f"smoke-{os.getpid()}.sqlite"
     db_path = ROOT / "data" / db_name
     _configure(base, db_name)
+    install_send_spy()
 
     try:
         run_happy_path(platform)

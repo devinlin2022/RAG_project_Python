@@ -44,17 +44,24 @@ def reset_pacing() -> None:
 
 
 def _pace(min_interval: float) -> None:
-    """Block until `min_interval` has passed since the previous call."""
+    """Block until this caller's reserved slot, then return ready to send.
+
+    Reserve the slot under the lock, sleep *outside* it. Holding the lock across
+    the sleep looks equivalent but is not: the thread that wakes up has to fight
+    for the GIL before it reaches `requests.post`, and a thread that finished its
+    sleep earlier can overtake it — the server then sees two arrivals 5ms apart
+    even though we waited 120ms. Reserving an absolute slot and sleeping to it
+    keeps arrival order aligned with the schedule.
+    """
     global _last_call
     if min_interval <= 0:
         return
     with _pace_lock:
-        now = time.monotonic()
-        wait = _last_call + min_interval - now
-        if wait > 0:
-            time.sleep(wait)
-            now = time.monotonic()
-        _last_call = now
+        slot = max(time.monotonic(), _last_call + min_interval)
+        _last_call = slot
+    wait = slot - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
 
 
 def retry_after(response) -> float:

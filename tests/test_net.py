@@ -114,6 +114,33 @@ def test_concurrent_calls_are_spaced(platform):
     assert elapsed >= 0.55, "4 次调用 × 0.2s 至少该花 0.6s"
 
 
+def test_pacing_reserves_a_slot_per_caller():
+    """_pace 返回的那一刻就该轮到我了：并发调用者拿到的时刻必须彼此错开。
+
+    这条不经过网络，所以量的是节流本身而不是服务端线程调度——服务端记录的
+    到达时间会把 120ms 压成几毫秒，据此判断会时灵时不灵。
+    """
+    net.reset_pacing()
+    stamps: list[float] = []
+    lock = threading.Lock()
+
+    def one() -> None:
+        net._pace(0.05)
+        with lock:
+            stamps.append(time.monotonic())
+
+    threads = [threading.Thread(target=one) for _ in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    stamps.sort()
+    gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+    assert len(stamps) == 5
+    assert min(gaps) >= 0.045, f"并发下槽位被挤到一起：{[round(g, 3) for g in gaps]}"
+
+
 def test_401_is_not_retried(platform):
     platform.script = [401]
     response = post(platform)
