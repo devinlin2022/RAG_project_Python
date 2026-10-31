@@ -1,159 +1,88 @@
-# rag-agent · 文档助手
+# RAG Agent
 
-把一个几十页的文件（合同、制度、投标书、汇报 PPT）变成能追问、能给出处、会说"没写"的问答服务。
-单进程：Gradio 界面 + FastAPI 接口共享同一份索引，一条命令启动。
+把几十页的合同、制度、标书或汇报 PPT 变成可追问的问答服务：回答带页码引用，文档里没写的就说没有。
 
-> 代码注释用英文，界面文案用中文。仓库只带虚构示例，不含任何真实业务材料。
+![version](https://img.shields.io/badge/version-1.5.0-blue)
+![python](https://img.shields.io/badge/python-3.10%2B-3776AB)
+![tests](https://img.shields.io/badge/tests-203%20passed-brightgreen)
 
-## 界面：Flowbite 风格的应用外壳
+单进程运行，Gradio 界面与 FastAPI 接口共用同一份索引，一条命令启动。v1.5.0 是首个完整版本。
 
-界面照 Flowbite 的 chat room 重做：左边一条固定导航栏，中间是对话，右边是「这次回答的依据」。
-没有 Tailwind 构建步骤，也不加载 CDN —— `app/style.py` 是一份纯 CSS 的设计系统
-（灰阶灰面、blue-700 主色、8px 圆角、1px 边框），Gradio 只负责控件和事件，
-所以 Colab 与离线机器都能一样渲染。
+## 功能
 
-```
-┌────────────┬──────────────────────────┬───────────────┐
-│ 品牌        │ 对话 / 工作台              │ 检索流水线      │
-│ 检索强度     │ 消息气泡 · 引用徽标        │ 命中块          │
-│ 工作区导航   │ ─────────────────────    │ 命中列表 / 对比 │
-│ 模型状态     │ 输入框                    │               │
-└────────────┴──────────────────────────┴───────────────┘
-```
+- **多格式解析** —— PDF、Word、PPT、Excel、Markdown、TXT，统一成带页码的页级文本
+- **混合检索** —— BM25 关键词 + bge-m3 向量，RRF 融合后精排
+- **页码引用** —— 每个结论标注来源页，可回原文核对
+- **双模式** —— 快速（两路检索）与增强（改写 + 扩召回 + 精排），可切换、可同题对比
+- **自带评测** —— 从文档块自动出题，页码即标准答案，不依赖人工标注
+- **扫描件增强** —— 扫描页 OCR、图表描述、表格转 Markdown，按页路由，只对需要的页计费
 
-导航按「谁需要」分两组，同一份代码两种视角：
+## RAG 技术方案
 
-| 导航 | 业务用户 | 专业用户 | 看什么 |
-|---|---|---|---|
-| 对话 | ✓ | ✓ | 气泡对话、答案里的引用编号、右侧证据栏 |
-| 文档与解析 | ✓ | ✓ | 上传、文档列表、格式与页轴、哪几页会触发 OCR |
-| 分块地图 | ✓ | ✓ | 每个块的位置、类型、字数；条形按字数成比例 |
-| 原文核对 | ✓ | ✓ | 逐页对照识别结果 |
-| **页级诊断** | 变灰 | ✓ | 每页字符 / 表格 / 图像占比与扫描标记——路由依据 |
-| **检索指标** | 变灰 | ✓ | 两种模式的 hit@5 与 MRR |
-
-**检索强度就是视角开关。**「快速检索」是业务视角：页级诊断与检索指标变灰且不可点，
-流水线只留 3 步；切到「增强检索」解锁这两页，右侧换成 7 步完整流水线。
-变灰是前端约束（`html[data-fb-mode="fast"]`），不影响接口——`/ask` 仍可按 `mode` 调用。
-
-首页那行就是入口：拖进文件、点「上传并入库」，解析与建索引一步做完，然后就能提问。
-「文档与解析」里默认只摊开文档列表（文件名 / 格式 / 页 / 块 / 状态），
-索引参数与解析明细各自折叠——业务用户不需要一进门就看见十来个数字。
-「检索指标」里点「自动出题并评测」：从当前文档的块里出题，页码自动作为标准答案，
-不用先准备 golden.jsonl，也不用人工标注。
-已有文档时，打开页面就以最近一篇预填工作台：流程条、分块地图、页级诊断、
-原文核对都直接有内容，不需要先手动选一次文档。
-
-顶部还有一条六格流程条（上传建索引 → 解析结果 → 分块地图 → 页级诊断 → 原文查看 → 检索指标），
-随文档状态点亮 ✓，所以"我做到哪一步"不用猜。
-
-流水线是**流式**的：提问瞬间先画出这个模式的完整步骤骨架（灰色待办），然后逐条点亮，
-每条都带实测数字——改写结果、向量维度与 L2 范数、余弦最高分、BM25 分词、融合候选数、
-精排前后分数、首字延迟、token 数。答案下方还有一行账单：模式、各段耗时、引用有效率、token。
-
-**要不要用增强检索？** 右侧「要不要用增强检索？」里可以点一次对比：同一个问题各检索一次
-（不调用生成模型），给出命中块数、覆盖页、页覆盖率、首位优势、耗时，并直接说结论——
-"两种模式命中的是同一批页，用快速检索就够"，或者"增强多带回了 p.6，挤掉了 p.2"。
-
-## 支持的格式
-
-| 格式 | 抽取方式 | 页码含义 |
+| 环节 | 实现 | 模型 / 参数 |
 |---|---|---|
-| PDF | pdfium 取文本层；表格页再用 pdfplumber 精查 | 真实页 |
-| Word `.docx` | python-docx，表格转 Markdown，识别分页符 | 真实页或虚拟页 |
-| PPT `.pptx` | python-pptx，**连接线还原成 `A -> B` 箭头关系** | 一张幻灯片 = 一页 |
-| Excel `.xlsx` / `.csv` | openpyxl / csv，每个工作表转 Markdown 表 | 表内分虚拟页 |
-| Markdown / TXT / HTML | 按空行切块后打包 | 虚拟页 |
+| 解析 | pypdfium2 取文本层，pdfplumber 只精查表格页；python-docx / python-pptx / openpyxl | — |
+| 切分 | 结构感知（标题层级）为主，可选语义 / 递归 / 混合；PPT 一页一块 | 500 字，80 重叠 |
+| 稀疏检索 | 自实现 BM25 | jieba 分词，拉丁 token 不拆 |
+| 向量检索 | NumPy 归一化内积，精确 top-k | `BAAI/bge-m3`，1024 维 |
+| 融合 | Reciprocal Rank Fusion | k = 60 |
+| 精排 | 交叉编码器重排候选块 | `BAAI/bge-reranker-v2-m3` |
+| 生成 | 只依据命中块作答，输出 `[n]` 引用 | `deepseek-ai/DeepSeek-V3.2` |
+| 视觉 | 扫描页转录、图表与流程图描述 | `Qwen/Qwen3-VL-8B` / `32B` |
 
-幻灯片是特例：拆块时**一页一块**，否则整份 PPT 会被塞进一个块、引用变成 `p.1-12`。
+不引入 LangChain、FAISS、rank-bm25：检索链路里每个分数、每段耗时都直接可见。索引存在 SQLite（WAL），float32 向量随块存，删文档不会留下索引漂移。
+
+PDF 与 Office 文档保留真实页码，纯文本按虚拟页切分；PPT 一张幻灯片一块，避免整份幻灯片挤成一个块、引用变成 `p.1-12`。
 
 ## 快速开始
 
 ```bash
+git clone https://github.com/devinlin2022/RAG_project_Python.git
+cd RAG_project_Python
 pip install -r requirements.txt
-cp .env.example .env       # 只填 SILICONFLOW_API_KEY 这一行
-python check_llm.py        # 校验 Key、四个模型 ID 与四条通道
-python run.py              # http://127.0.0.1:7860
+cp .env.example .env          # 只需填 SILICONFLOW_API_KEY
+python check_llm.py           # 校验 Key 与四条模型通道
+python run.py                 # http://127.0.0.1:7860
 ```
 
-没有 `.env` 也能启动：界面「运行状态与用量」里可以直接粘贴 Key（只存内存），解析和关键词检索不花钱。
+首页拖入文件 → 「上传并入库」→ 开始提问。没有 `.env` 也能启动，界面里可临时粘贴 Key（只存内存）。
 
-在 Colab 上：打开 [`colab.ipynb`](colab.ipynb)，三格跑完就有地址。
-
-1. 左侧 🔑 里存两个 Secret：`SILICONFLOW_API_KEY`（必填）、`NGROK_AUTHTOKEN`（可选）
-2. 依次运行「取代码 → 装依赖 → 启动」
-
-第三格会打印 `https://xxxx.ngrok-free.app`，点开就是界面。服务在后台线程里跑，
-这一格几秒就返回；`from tools.colab import stop; stop()` 停掉。改了 `.env` 或换了 Key
-重跑这一格就生效，不用重启会话。
-
-不想用笔记本，手敲等价：
+**Colab**：打开 [`colab.ipynb`](colab.ipynb)，在 🔑 Secrets 里填 `SILICONFLOW_API_KEY`（可选 `NGROK_AUTHTOKEN`），依次运行三格即可拿到公网地址。也可以直接：
 
 ```python
-!pip install -r requirements.txt
 from tools.colab import boot
-boot()                                     # 取 Key → 写 .env → 起服务 → 打印地址
+boot()
 ```
 
-或者最原始的写法（会占住整格）：
+**Docker**：
 
-```python
-import os
-os.environ["SILICONFLOW_API_KEY"] = "sk-..."
-os.environ["NGROK_AUTHTOKEN"] = "..."      # 填了就自动开隧道，无需 NGROK_ENABLED
-!python run.py
+```bash
+docker build -t rag-agent .
+docker run --rm -p 7860:7860 --env-file .env -v "$PWD/data:/app/data" rag-agent
 ```
-
-`APP_HOST` 会自动切到 `0.0.0.0`（检测到 Colab 或 ngrok），不需要手动改。
-没有 `NGROK_AUTHTOKEN` 时用 Colab 自带代理：`output.serve_kernel_port_as_window(7860)`。
 
 ## 配置
 
-一个入口，五个模型，全在硅基流动：
+完整清单见 [`.env.example`](.env.example)。
 
-| 变量 | 默认 | 说明 |
+| 变量 | 默认值 | 说明 |
 |---|---|---|
-| `SILICONFLOW_API_KEY` | 空 | 唯一的 Key；问答、向量、精排、视觉共用 |
+| `SILICONFLOW_API_KEY` | 空 | 唯一 Key，问答 / 向量 / 精排 / 视觉共用 |
 | `SILICONFLOW_BASE_URL` | `https://api.siliconflow.cn/v1` | `.cn` 与 `.com` 的 Key 和模型目录不通用 |
-| `LLM_MODEL` | `deepseek-ai/DeepSeek-V3.2` | 换模型只改这一行 |
-| `EMBED_MODEL` | `BAAI/bge-m3` | 1024 维 |
-| `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | 关闭后按融合分排序 |
-| `OCR_MODEL` | `Qwen/Qwen3-VL-8B-Instruct` | 扫描页转录：同一页识别结果与 32B 一致，7.7s vs 17.5s |
-| `VISION_MODEL` | `Qwen/Qwen3-VL-32B-Instruct` | 图表描述，需要理解箭头指向 |
-| `OCR_ENABLED` | `true` | 配了 Key 就能用；只有扫描页会触发，纯文字 PDF 不产生费用 |
-| `PARSE_WORKERS` / `EMBED_CONCURRENCY` | `4` / `3` | 多文件并行解析、多批并行向量化 |
-| `PRICE_IN_PER_M` / `PRICE_OUT_PER_M` | `0` | 填了就在用量里折算金额 |
-
-旧变量名（`LLM_API_KEY` / `LLM_BASE_URL`）仍然生效。完整清单见 `.env.example`。
-
-界面「运行状态」里有两行容易看混的开关：**模型 Key**（能不能调硅基流动）和
-**接口访问保护**（`APP_API_KEY`，保护 `/ask` 这类 HTTP 接口）。两者互不影响，
-文案上已经分开写。
-
-## 速度
-
-同一台机器、48 页 PDF、冷缓存：
-
-| 环节 | 之前 | 现在 |
-|---|---|---|
-| 解析 | 911 ms（pdfminer 全文 + pdfplumber 逐页找表） | **357 ms**（pdfium + 只精查像表格的页） |
-| 扫描件增强 | 逐页串行，20 页约 4 分钟 | 并发 3，约 1 分钟 |
-| 建索引 | 单批串行向量化 | 分批并发，块多时近似线性加速 |
-
-解析快的关键是**不再对每一页跑表格识别**：先用 pdfium 拿到文本与图元数，
-只有"有网格痕迹 / 多列文本"的页才交给 pdfplumber。
+| `LLM_MODEL` | `deepseek-ai/DeepSeek-V3.2` | 生成模型 |
+| `EMBED_MODEL` | `BAAI/bge-m3` | 向量模型 |
+| `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | 精排模型，置空则按融合分排序 |
+| `OCR_ENABLED` | `true` | 仅扫描页触发，纯文字文档不产生视觉费用 |
 
 ## 接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/health` | 免鉴权健康检查 |
-| POST | `/ingest` | 上传任意支持格式（sha256 幂等） |
-| GET | `/documents` · `/documents/{id}/pages` | 文档列表、页级信号 |
-| POST | `/documents/{id}/index` · `/enhance` | 建索引、跑增强识别 |
-| POST | `/ask` | 同步问答；`mode` 取 `fast` / `enhanced` |
-| POST | `/ask/stream` | SSE：每条流水线事件一帧 |
-| GET | `/system` · `/queries` | 系统信息、最近查询（Swagger 在 `/docs`） |
+| GET | `/health` | 健康检查 |
+| POST | `/ingest` | 上传文件，sha256 幂等 |
+| POST | `/ask` | 同步问答，`mode` 取 `fast` / `enhanced` |
+| POST | `/ask/stream` | SSE 流式返回流水线事件 |
+| GET | `/documents` · `/system` · `/queries` | 文档列表、系统信息、最近查询 |
 
 ```bash
 curl -s -X POST http://127.0.0.1:7860/ask \
@@ -161,87 +90,39 @@ curl -s -X POST http://127.0.0.1:7860/ask \
   -d '{"question":"付款账期最长是多少天？","mode":"enhanced"}'
 ```
 
+Swagger 在 `/docs`。
+
 ## 评测
 
-`eval/golden.jsonl` 每题带标注页码，`answerable:false` 的题检验拒答。
-
 ```bash
-python -m eval.run_eval --doc demo-policy --top-k 5
-python -m eval.run_eval --doc demo-policy --top-k 5 --generate   # 追加引用与拒答指标
+python -m eval.run_eval --doc demo-policy --top-k 5            # 检索指标
+python -m eval.run_eval --doc demo-policy --top-k 5 --generate # 追加引用与拒答
 ```
 
-仓库自带 `data/samples/demo-policy.pdf`（8 页虚构制度，含一张权限矩阵、一页流程图）：
-入库 1,967 字符，增强后 2,433 字符，10 块；21 题 hit@5 100%、MRR 1.000、引用 20/20、拒答 3/3。
-块太少，三路检索都是满分 —— 这是**回归基线**，不是策略对比。
+仓库自带示例文档 `data/samples/demo-policy.pdf`（8 页虚构制度），21 道题：
 
-两种模式在同一批题上的实测（只跑检索，不调用生成模型）：
-
-| 模式 | hit@5 | MRR | 平均耗时 |
-|---|---|---|---|
-| 快速检索 | 100% | 0.972 | 1.4 s |
-| 增强检索 | 100% | 1.000 | 1.9 s |
-
-差距体现在 MRR，也就是"第一条是不是那条"：3 个题的命中页在快速模式下排到了第 2–3 位，
-精排把它们拉回第 1。示例库只有 10 块，看不出召回率差异 —— 这也是界面里
-「对比两种模式」按钮存在的理由：**在你的文档上现测**，而不是信这里的数字。
-
-## 架构
-
-```
-文件 ─┬─ pdfium / docx / pptx / xlsx 抽取（并行） ─┐
-      ├─ pdfplumber 表格 → Markdown（仅可疑页）    ├─ 结构感知切分 ─┬─ BM25（jieba + 拉丁 token 保护）
-      ├─ 视觉模型 OCR（扫描页，并发）              │                 └─ bge-m3 向量（精确余弦）
-      └─ 视觉模型图注（流程图箭头）                ┘                 ↓
-                                            RRF(k=60) → 精排 → 带 [n] 引用作答
-```
-
-| 层 | 选型 | 为什么 |
+| 模式 | hit@5 | MRR |
 |---|---|---|
-| 切分 | 自实现 structured / hybrid / semantic / recursive + 按页 | 可解释、可测、毫秒级 |
-| 稀疏 | 自实现 BM25（40 行） | 省一个依赖，词表与块同生命周期 |
-| 向量 | NumPy 归一化内积 | 小库精确搜索，结果等同 `IndexFlatIP` |
-| 融合 | RRF | 余弦 [0,1] 与 BM25 [0,40] 量纲不同，只合并名次 |
-| 存储 | SQLite（WAL），float32 向量随块存 | 删文档就是一条 DELETE，不会索引漂移 |
-| 服务 | FastAPI + Gradio `mount_gradio_app` | 单进程单状态，界面与接口共用索引 |
-| 界面 | `app/ui.py` 结构 + `app/style.py` 设计系统 | 布局靠 CSS 栅格，主题/样式在挂载时注入，不依赖 Tailwind 构建 |
-| 启动 | `colab.ipynb` + `tools/colab.py` | 笔记本里 `!python run.py` 会把整格占死；改成后台线程，单元格几秒返回 |
-| 调用 | `rag/net.py` 全局节流 + 抖动退避 + 状态码分级 | 四条通道共用一个闸门，401 不重试，429 才退避 |
-| 诊断 | `rag/diagnose.py` | .cn/.com 的 Key 不通用，报错却同形；由程序去试另一站，而不是让人猜 |
-| 评测 | `eval/generate.py` | 从块里出题，页码即标准答案；换文档也不用人工标注 |
+| 快速检索 | 100% | 0.972 |
+| 增强检索 | 100% | 1.000 |
 
-不用 LangChain / FAISS / rank-bm25：这条链路的价值就在分数与耗时可见，框架会把它们藏起来。
+引用有效率 20/20，拒答 3/3。示例库只有 10 个块，两组数字是回归基线，不代表策略差异；换文档用界面里的「自动出题并评测」现测。
 
-## 出错了先看这一节
+## 项目结构
 
-四条通道（问答 / 向量 / 精排 / 视觉）用的是同一把 Key、同一个地址，所以它们**同时**坏了，
-问题一定在配置或账户上，不在代码里：
-
-| 现象 | 真正的原因 | 怎么办 |
-|---|---|---|
-| 四条全 401 `30014 Token is invalid` | Key 与 `SILICONFLOW_BASE_URL` 不是同一个站点 | `.cn` 的 Key 配 `.cn`，`.com` 的配 `.com`。程序会自动拿同一个 Key 去试另一站，通了就直接告诉你 |
-| 401 只在某一站出现、另一站 402 | 站点对了，但那个账户余额为 0 | 在**同一个站点**充值；另一站的余额不通用 |
-| 只有精排 404 | `.com` 上没有 `bge-reranker-v2-m3` | 用 `Qwen/Qwen3-Reranker-8B`，或 `RERANK_ENABLED=false` 先关掉 |
-| 向量化显示"已暂停 …秒后重试" | 之前认证或余额失败，熔断 5 分钟 | 换 Key 后会自动解除；界面「粘贴 Key」也会立刻解除 |
-| 偶发 429 | 嵌入/精排/视觉并发太密 | 调大 `HTTP_MIN_INTERVAL`（默认 0.12s）、调小 `EMBED_CONCURRENCY` |
-
-不用真 Key 也能验证这套判断对不对：
-
-```bash
-python -m tools.smoke_offline
 ```
-
-它起一个假的硅基流动，把解析→建索引→流式问答→自动出题→双模式评测→节流→401→429
-全跑一遍并逐条断言，最后打印"全部通过"。Colab 上遇到问题先跑它，能直接排除一半可能。
-
-## 数据边界
-
-- 仓库只带虚构示例：`data/samples/` 下 6 个文件全部由 `python tools/make_demo_doc.py` 从同一份正文生成（pdf 8 页 / docx / pptx 4 张幻灯片 / xlsx 2 个表 / md / 英文 3 页 fixture），所以二进制可复现，改文案就能重新出全套。
-- `data/uploads/`、`data/rag.sqlite`、`eval/report.md` 在 `.gitignore` 里：上传件与查询日志只留在本机。
-- 清空 `data/` 即可分发，服务启动会重建空库。
+app/     Gradio 界面 + FastAPI 路由，Flowbite 风格外壳
+rag/     解析 → 切分 → 索引 → 检索 → 生成
+eval/    评测集、指标、自动出题
+tools/   Colab 启动、离线冒烟、示例文档生成
+tests/   203 个测试
+```
 
 ## 已知限制
 
-- 中文提问 + 英文文档时 BM25 失效（无共同 token），实际只剩向量一路，靠 bge-m3 与精排兜底。
+- 中文提问 + 英文文档时 BM25 无共同 token，实际只剩向量一路，靠 bge-m3 与精排兜底。
 - 扫描页 OCR 每页 15–30 秒，受 `OCR_MAX_PAGES` 与 `ENHANCE_MAX_SECONDS` 双重预算限制。
-- 索引常驻内存，单机单进程；百万级块要换 ANN 与独立向量库。
-- Excel 只取单元格文本，图表与图片不解析。
+- 索引常驻内存、单进程单机；百万级块需要换 ANN 与独立向量库。
+- 默认不开启鉴权，公网部署请设置 `APP_API_KEY`。
+
+更新记录见 [CHANGELOG.md](CHANGELOG.md)。
