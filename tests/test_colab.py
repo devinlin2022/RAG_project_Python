@@ -1,8 +1,4 @@
-"""Colab 启动助手的单元测试。
-
-只测纯函数和文件读写——真正起 uvicorn 的 `serve()` 不进单测，
-用 `tests/test_colab_smoke.py` 那种手动脚本验（见 README）。
-"""
+"""Colab bootstrap: .env handling and notebook structure."""
 
 import json
 from pathlib import Path
@@ -11,7 +7,7 @@ import pytest
 
 from tools import colab
 
-EXAMPLE = """# 注释要保留
+EXAMPLE = """# keep this comment
 SILICONFLOW_API_KEY=
 SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
 OCR_ENABLED=true
@@ -26,8 +22,7 @@ def test_parse_env_skips_comments_and_quotes():
 def test_patch_env_replaces_value_in_place():
     text = colab.patch_env(EXAMPLE, {"SILICONFLOW_API_KEY": "sk-abc"})
     assert "SILICONFLOW_API_KEY=sk-abc" in text
-    assert "# 注释要保留" in text
-    # 顺序不变：Key 仍在 BASE_URL 之前
+    assert "# keep this comment" in text
     assert text.index("SILICONFLOW_API_KEY") < text.index("SILICONFLOW_BASE_URL")
     assert text.count("SILICONFLOW_API_KEY") == 1
 
@@ -36,9 +31,8 @@ def test_patch_env_appends_missing_key_once():
     text = colab.patch_env(EXAMPLE, {"NGROK_AUTHTOKEN": "tok"})
     assert text.rstrip().endswith("NGROK_AUTHTOKEN=tok")
     assert text.count("NGROK_AUTHTOKEN=tok") == 1
-    # 再写一次不应再追加，否则 .env 里会出现两段同样的注释块
     again = colab.patch_env(text, {"NGROK_AUTHTOKEN": "tok2"})
-    assert again.count("# ── 由 colab.ipynb 写入 ──") == 1
+    assert again.count(colab.ENV_MARKER) == 1
     assert "NGROK_AUTHTOKEN=tok2" in again and "NGROK_AUTHTOKEN=tok\n" not in again
 
 
@@ -71,7 +65,7 @@ def test_write_env_does_not_overwrite_existing_key(sandbox):
     env.write_text(colab.patch_env(EXAMPLE, {"SILICONFLOW_API_KEY": "sk-old"}), encoding="utf-8")
 
     info = colab.write_env(api_key="sk-from-secret")
-    assert info["changed"] == []                       # 已有值就不动
+    assert info["changed"] == []
     assert "sk-old" in env.read_text(encoding="utf-8")
 
     info = colab.write_env(api_key="sk-from-secret", force=True)
@@ -82,7 +76,7 @@ def test_write_env_does_not_overwrite_existing_key(sandbox):
 def test_write_env_without_any_value_does_not_touch_file(sandbox):
     info = colab.write_env()
     assert not info["created"] and info["changed"] == []
-    assert not (sandbox / ".env").exists()             # 空手启动不落盘
+    assert not (sandbox / ".env").exists()
 
 
 def test_notebook_is_valid_and_calls_boot():
@@ -92,5 +86,4 @@ def test_notebook_is_valid_and_calls_boot():
     code = "\n".join("".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code")
     assert "from tools.colab import boot" in code
     assert "boot()" in code
-    # 第一格必须能重复执行：clone 前先判断目录
     assert "if not in_repo and not root.exists()" in code

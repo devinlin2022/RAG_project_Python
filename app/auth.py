@@ -1,7 +1,7 @@
 """API key auth, per-client rate limiting, and JSON logs with secret masking.
 
-All three are opt-in: with an empty APP_API_KEY / UI_PASSWORD the service runs
-open for local use, which is what a demo needs. Setting them is one .env line.
+All three are opt-in: an empty APP_API_KEY / UI_PASSWORD leaves the service
+open for local use.
 """
 
 import json

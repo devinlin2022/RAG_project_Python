@@ -1,14 +1,4 @@
-"""从当前文档自动出题：没有人工标注，也能算命中率和 MRR。
-
-思路和 RAGAS 的 testset 生成一样——问题从块里长出来，标准答案也来自这个块。
-区别在依赖：ragas 会拖进 langchain / datasets / openai，和这里的
-gradio + fastapi 版本互相顶，装一次能让界面起不来。所以这里只做那件事本身，
-产物对齐它的字段（question / ground_truth / contexts），额外加一个 `pages`——
-块自己带着页码，这就是"标准答案页"，不用人工去翻。
-
-一道题值不值得信，取决于它是不是只能靠这一页回答。所以提示词里明确禁止
-"这一页讲了什么"这类范围过大的问题。
-"""
+"""Build an evaluation set from the indexed chunks, one question per chunk."""
 
 from __future__ import annotations
 
@@ -40,7 +30,6 @@ _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
 
 
 def _parse(text: str) -> list[dict]:
-    """容忍 ```json 围栏、前后废话、只返一个对象这几种常见跑偏。"""
     body = text.strip()
     fenced = _FENCE.search(body)
     if fenced:
@@ -52,7 +41,6 @@ def _parse(text: str) -> list[dict]:
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
-        # 模型偶尔在数组后面补一句"希望有帮助"，截到最后一个右括号
         end = body.rfind("]")
         if end < 0:
             return []
@@ -78,10 +66,6 @@ def _parse(text: str) -> list[dict]:
 
 
 def sample_records(records: Iterable, limit: int) -> list:
-    """按页分散取样：同一页只取一个块，取不够再从剩下的里补。
-
-    顺序取样会全落在一份文档的前几页，命中率看起来虚高——那几页本来就好找。
-    """
     buckets: dict[tuple[str, int], list] = {}
     for record in records:
         if not (record.text or "").strip():
@@ -108,10 +92,6 @@ def generate_questions(
     per_chunk: int = 1,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict:
-    """返回 {"questions": [...], "failed": n, "calls": n}。
-
-    每道题都带 pages=[块的起始页]，直接可以喂给 eval.run_eval.run_questions。
-    """
     samples = sample_records(records, limit)
     questions: list[dict] = []
     failed = 0
@@ -145,7 +125,6 @@ def generate_questions(
                     "q": item["q"],
                     "pages": [int(record.page_from)],
                     "answerable": True,
-                    # 下面三个字段是给想接 RAGAS 或人工复核的人看的
                     "ground_truth": item["answer"],
                     "contexts": [(record.text or "")[:400]],
                     "source_chunk": record.idx,

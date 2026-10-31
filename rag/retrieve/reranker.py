@@ -1,9 +1,4 @@
-"""Cross-encoder reranking through SiliconFlow's /v1/rerank endpoint.
-
-A hosted cross-encoder replaces a local bge-reranker load: no torch, no 2 GB
-download, and the same model (`bge-reranker-v2-m3`). The call is one request per
-query, so latency is bounded and visible in the UI.
-"""
+"""Cross-encoder reranking through the /v1/rerank endpoint."""
 
 import logging
 

@@ -1,8 +1,7 @@
 """Reciprocal rank fusion.
 
 Rank-based fusion needs no score normalisation, so a cosine in [0, 1] and a
-BM25 score in [0, 40] can be combined without inventing a weight. k=60 is the
-value from the original TREC paper and is kept configurable.
+BM25 score in [0, 40] combine without an invented weight.
 """
 
 

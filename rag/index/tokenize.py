@@ -1,11 +1,7 @@
 """Tokenisation shared by BM25 and any lexical score.
 
-Two rules matter more than the segmenter itself:
-
-- Latin / code tokens stay whole. Splitting "INV-2048" into "inv" and "2048" is how
-  BM25 stops matching the identifiers that appear in tables.
-- Chinese falls back to character bigrams when jieba is unavailable, so the
-  lexical rail never depends on an optional package.
+Latin and code tokens stay whole, so INV-2048 does not become inv + 2048, and
+Chinese falls back to character bigrams when jieba is unavailable.
 """
 
 import re

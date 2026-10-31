@@ -1,9 +1,8 @@
 """Verify .env against the live API: model ids, chat, embedding, rerank, vision.
 
-Usage:
-    python check_llm.py             # models + chat + embedding + rerank
-    python check_llm.py --ocr       # also one vision call (costs one page)
-    python check_llm.py --models    # print what this key can actually use
+Usage:/n    python check_llm.py             # models + chat + embedding + rerank
+    python check_llm.py --ocr       # also one vision call
+    python check_llm.py --models    # print what this key can use
 """
 
 import sys

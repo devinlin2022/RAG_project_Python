@@ -1,8 +1,7 @@
 """Entry point: one process serving both the Gradio UI and the FastAPI routes.
 
-Works the same way locally, in Docker and in Colab. Only two things differ and
-both are detected, not configured: the bind address and whether a tunnel is
-opened (a notebook has no reachable localhost).
+The bind address and the tunnel are detected at runtime, so the same code
+runs locally, in Docker and in Colab.
 """
 
 import importlib

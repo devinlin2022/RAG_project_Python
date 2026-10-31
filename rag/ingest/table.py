@@ -1,8 +1,7 @@
 """Turn a page's tables into Markdown.
 
-Three cases: ruled grid (pdfplumber), pipe text, space-aligned text. The latter
-two are parsed from the extracted text, because pdfplumber's text strategy splits
-on the pipe characters themselves and mangles them.
+Ruled grids come from pdfplumber; pipe text and space-aligned text are parsed
+from the extracted text.
 """
 
 import logging

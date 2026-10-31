@@ -1,4 +1,4 @@
-"""PyCharm entry point. Set run.py as the run target, working dir = project root."""
+"""PyCharm entry point: run this file with the project root as cwd."""
 
 from app.main import main
 

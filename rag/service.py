@@ -1,10 +1,8 @@
-"""Single orchestration layer: ingest, index, retrieve, answer, evaluate.
+"""Orchestration layer: ingest, index, retrieve, answer, evaluate.
 
-Both the Gradio UI and the HTTP API call this module. Nothing here knows about
-either transport, which is what keeps one process and one index state.
-
-The answering path is a generator from the first rewrite to the last token, so
-the UI can show what the pipeline is doing instead of a spinner.
+The UI and the HTTP API both call this module, so one process keeps one index
+state. The answering path is a generator, which lets the UI render each stage
+as it happens.
 """
 
 import logging
@@ -107,8 +105,7 @@ class Service:
                 "created_at": meta["created_at"],
                 "strategy": meta["strategy"],
                 "chunk_count": meta["chunk_count"],
-                # dim 是"这份文档到底有没有向量"的唯一凭据。库里有，取回时必须带上，
-                # 否则重启后每份文档都显示 0 维，看起来和"向量化没生效"完全一样。
+                # dim is the only proof that this document has vectors at all.
                 "dim": meta.get("dim", 0),
                 "indexed_at": meta["indexed_at"],
                 "enhanced_at": meta["enhanced_at"],
@@ -158,11 +155,7 @@ class Service:
         return doc, False
 
     def ingest_files(self, paths: list[str], on_event=None) -> list[dict]:
-        """Parse several uploads in parallel, then report in input order.
-
-        Parsing is CPU-bound per file but the files are independent, so the wall
-        clock drops with the number of files rather than their total size.
-        """
+        """Parse several uploads in parallel, then report in input order."""
         emit = on_event or (lambda event: None)
         results: list[dict] = [{} for _ in paths]
 
@@ -269,8 +262,8 @@ class Service:
         force: bool = False,
     ) -> dict:
         doc = self.get(doc_id)
-        # 建索引时向量化要是正好挂了，这份文档就只有关键词检索。等 Key 修好以后
-        # 不能因为"已经建过索引"就一直跳过 —— 那样它永远补不上向量，增强检索对它无效。
+        # A document indexed while embedding was down has no vectors; index it again
+        # now that the key works instead of skipping it forever.
         needs_vectors = settings.embed_ready and not doc.get("dim")
         if doc.get("chunk_count") and doc.get("indexed_at") and not force and not needs_vectors:
             return {
@@ -441,11 +434,7 @@ class Service:
         mode: str = "fast",
         top_k: int = 5,
     ) -> dict:
-        """One question through one mode's settings, without generating an answer.
-
-        Evaluation and the mode comparison both need this: `retrieve` alone
-        cannot express "the enhanced pool is twice as wide".
-        """
+        """One question through one mode's settings, without generating an answer."""
         plan = self.resolve_mode(mode)
         result = self.retrieve(
             query,
@@ -461,11 +450,10 @@ class Service:
     def compare_modes(
         self, query: str, doc_ids: list[str] | None = None, top_k: int = 5
     ) -> dict:
-        """Run the same question through both modes and say which one earned its cost.
+        """Run the same question through both modes and compare the retrieved pages.
 
-        No model call: both runs stop before generation, so pressing this button
-        costs one embedding and (in enhanced mode) one rerank -- not an answer.
-        The numbers are retrieval facts, not a guessed quality score.
+        Both runs stop before generation, so this costs one embedding and, in
+        enhanced mode, one rerank.
         """
         rows: list[dict] = []
         for name in ("fast", "enhanced"):
@@ -584,17 +572,16 @@ class Service:
     ):
         """Yield pipeline events, then ("prepared", payload).
 
-        Every event carries the number the UI needs -- dimension, norm, hit
-        count, elapsed -- because "thinking" without evidence is theatre.
+        Every event carries the numbers the UI renders: dimension, norm, hit count,
+        elapsed time.
         """
         plan = self.resolve_mode(mode)
         if not (question or "").strip():
             raise ServiceError("问题不能为空")
         top_k = top_k or plan["top_k"]
         strategy = strategy or plan["strategy"]
-        # A rewrite is only worth a round trip when the question actually points
-        # back at something ("那它呢"); `rewrite_question` itself no-ops without
-        # a key, so the branch stays cheap when unconfigured.
+        # A rewrite is only worth a round trip when the question points back at
+        # something like "what about that one"; without a key the helper no-ops.
         want_rewrite = plan["rewrite"] if rewrite is None else rewrite
         want_rerank = plan["rerank"] if rerank is None else rerank
 
@@ -886,7 +873,6 @@ class Service:
     ) -> dict:
         from eval.run_eval import load_golden, run_questions
 
-        # 自动出的题和 golden.jsonl 走同一条评测路径，只是换了一组题目来源。
         questions = load_golden(golden_path) if questions is None else questions
         picked = doc_ids if doc_ids is not None else self.doc_ids_matching(doc_pattern)
         rows, skipped = run_questions(
@@ -910,11 +896,6 @@ class Service:
         limit: int = 10,
         on_progress=None,
     ) -> dict:
-        """从当前文档的块里出题，页面标注直接取块的起始页。
-
-        没有这一步，「检索指标」只能跑仓库自带的 demo 题：换一份文档就是一片空白，
-        而命中率的用处恰恰在于"我刚上传的这份，找得到吗"。
-        """
         from eval.generate import generate_questions
 
         records = [
@@ -952,8 +933,7 @@ class Service:
             "ocr": {
                 "enabled": settings.ocr_enabled,
                 "ready": settings.ocr_ready,
-                # Why it is (not) on: "no key" and "switched off" are different
-                # problems, and the status table used to show both as 未启用.
+                # "No key" and "switched off" are different problems and read differently.
                 "state": settings.vision_state[1],
                 "model": settings.ocr_model,
                 "vision_model": settings.vision_model,

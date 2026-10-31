@@ -1,6 +1,6 @@
 """Golden-set runner: retrieval metrics for every strategy, citations optional.
 
-`python -m eval.run_eval --doc demo-policy --top-k 5`
+    python -m eval.run_eval --doc demo-policy --top-k 5
 """
 
 import argparse
@@ -64,8 +64,7 @@ def run_questions(
 
         started = time.perf_counter()
         if mode:
-            # Mode-driven run: the pool width and the rerank switch come from
-            # MODES, so "快速 vs 增强" can be measured on the same question set.
+            # Mode-driven run: pool width and the rerank switch come from MODES.
             result = service.retrieve_mode(question["q"], scoped, mode=mode, top_k=top_k)
         else:
             result = service.retrieve(question["q"], scoped, top_k=top_k, strategy=strategy)

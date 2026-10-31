@@ -63,8 +63,6 @@ class TestHeadingParser:
         assert parse_heading("2.1.3 细则")[0] == 6
 
     def test_decimal_outranks_circled_chinese(self):
-        # Contract style: 2.1 > （一）. Regulation style also works because
-        # （一） only has to sit below 一、.
         assert parse_heading("（一）完成开发")[0] > parse_heading("2.1 服务内容")[0]
 
     def test_body_sentence_is_not_a_heading(self):
@@ -184,7 +182,6 @@ class TestComparison:
 
 
 class TestTocStubs:
-    """A 目录 page makes every entry look like a heading."""
 
     TOC = """目录
 

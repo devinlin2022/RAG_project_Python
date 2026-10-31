@@ -186,7 +186,7 @@ class Doc:
             for col in range(count):
                 x = start_x + col * (box_w + gap)
                 positions.append((x, y, box_w, box_h))
-        control = {1, 2, 6}  # 预算校验 / 分级审批 / 发票校验
+        control = {1, 2, 6}
         for i, (x, y, w, h) in enumerate(positions[: len(labels)]):
             self.canvas.rect(x, y - h, w, h, stroke=1, fill=0)
             self.canvas.rect(x + 3, y - h + 3, w - 6, h - 6, stroke=1, fill=0)

@@ -1,5 +1,4 @@
-"""Diagram detection. Signals come from `loader.page_stats`; this module only
-decides and explains."""
+"""Diagram detection on top of loader.page_stats signals."""
 
 import logging
 from dataclasses import dataclass

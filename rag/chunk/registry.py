@@ -28,10 +28,8 @@ def _as_text_pairs(pairs: list[tuple[int, object]]) -> list[tuple[int, str]]:
 def _attach_pages(chunks: list[Chunk], pairs: list[tuple[int, object]]) -> list[Chunk]:
     """Re-derive page ranges from the source blocks.
 
-    Splitters work on text, so a piece cut out of a 40-page section inherits the
-    section's whole page span -- a citation then reads "p.1-46" and every page
-    looks equally likely. Mapping each chunk back onto the block stream restores
-    the real page, without threading page offsets through four splitters.
+    A piece cut out of a 40-page section would otherwise inherit the section's
+    whole page span, and every citation would read p.1-46.
     """
     compact: list[str] = []
     page_of: list[int] = []
@@ -72,12 +70,6 @@ def _is_stub(chunk: Chunk) -> bool:
 
 
 def _drop_stubs(chunks: list[Chunk]) -> list[Chunk]:
-    """Drop runs of title-only chunks: a table of contents becomes exactly that.
-
-    Every entry of a 目录 page looks like a heading, so the splitter opens a
-    section per entry and emits five chunks of pure titles. A lone short chunk
-    may still be a real heading, so only runs of two or more are removed.
-    """
     runs: list[list[int]] = []
     run: list[int] = []
     for index, chunk in enumerate(chunks):
@@ -104,12 +96,10 @@ def chunk_per_page(
     size: int = 500,
     overlap: int = 80,
 ) -> tuple[list[Chunk], dict]:
-    """One slide, one chunk. A deck must never be merged into a single block.
+    """One slide, one chunk.
 
-    Slides carry no headings, so a structural splitter sees one continuous
-    document and packs the whole deck into a chunk that cites "p.1-12". Keeping
-    each slide whole makes the citation read `p.7` and stops two unrelated
-    slides from sharing a retrieval slot.
+    Slides carry no headings, so a structural splitter would pack a whole deck
+    into one chunk citing p.1-12.
     """
     chunks: list[Chunk] = []
     current_page = None

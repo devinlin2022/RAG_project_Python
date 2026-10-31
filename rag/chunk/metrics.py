@@ -1,4 +1,4 @@
-"""Structural proxy metrics. Not retrieval precision; hit@5 / MRR arrive in V6."""
+"""Structural proxy metrics for chunking quality."""
 
 import re
 from collections import Counter
@@ -11,10 +11,9 @@ _GRAM = 8
 
 
 def boundary_violation(chunks: list[Chunk]) -> float:
-    """Share of prose chunks not ending on a terminal punctuation mark.
+    """Share of prose chunks not ending on terminal punctuation.
 
-    Tables and figure captions are excluded: a Markdown row ends with "|" by
-    construction, so counting them would report a defect that does not exist.
+    Tables and captions are excluded: a Markdown row ends with a pipe by design.
     """
     prose = [c for c in chunks if c.kind == "text" and c.text.strip()]
     if not prose:
@@ -24,11 +23,6 @@ def boundary_violation(chunks: list[Chunk]) -> float:
 
 
 def clause_integrity(source_text: str, chunks: list[Chunk]) -> float:
-    """Share of 第X条 labels that survive whole inside a single chunk.
-
-    Returns 1.0 for a document with no clause labels, which is why callers must
-    check `clause_applicable`: 100% of zero clauses is not evidence of quality.
-    """
     expected = Counter(_CLAUSE.findall(source_text))
     if not expected:
         return 1.0
@@ -56,8 +50,7 @@ def section_coverage(chunks: list[Chunk]) -> float:
 def overlap_waste(chunks: list[Chunk]) -> float:
     """Share of 8-grams repeated across prose chunks. High means redundancy.
 
-    Tables are excluded: their header and separator rows repeat by design, and
-    that repetition is what makes a split table readable.
+    Tables are excluded: header and separator rows repeat by design.
     """
     prose = [c for c in chunks if c.kind == "text"]
     if len(prose) < 2:
@@ -78,9 +71,8 @@ def overlap_waste(chunks: list[Chunk]) -> float:
 def prose_ratio(text: str) -> float:
     """Share of lines ending on sentence punctuation.
 
-    A slide deck made of bullet fragments scores near zero, and then "does a chunk
-    end on a sentence?" is measuring the document, not the chunker. The metric is
-    marked inapplicable below and dropped from the score.
+    A bullet deck scores near zero, so the metric is reported as not applicable
+    and dropped from the score instead of penalising the document.
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
@@ -90,10 +82,9 @@ def prose_ratio(text: str) -> float:
 
 
 def typed_preservation(chunks: list[Chunk], expected_typed: int) -> float | None:
-    """Share of table/figure/ocr blocks that survived as their own chunk type.
+    """Share of table, figure and OCR blocks kept as their own chunk type.
 
-    Only structure-aware strategies can keep a table a table. Semantic and
-    recursive chunking flatten it into prose, which no other metric here notices.
+    Only structure-aware strategies can keep a table a table.
     """
     if expected_typed <= 0:
         return None

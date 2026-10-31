@@ -1,3 +1,5 @@
+"""File ingestion: extraction, page flags, enhancement rails."""
+
 from rag.ingest.loader import (
     annotate,
     column_ratio,

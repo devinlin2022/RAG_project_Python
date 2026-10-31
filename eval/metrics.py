@@ -1,7 +1,4 @@
-"""Evaluation metrics: retrieval hit rate, MRR, citation grounding, abstention.
-
-All functions are pure so they can be tested without a model or a PDF.
-"""
+"""Evaluation metrics: hit rate, MRR, citation grounding, abstention."""
 
 import re
 
@@ -14,8 +11,7 @@ def rank_of_first_hit(
 ) -> int:
     """1-based rank of the first hit, 0 when nothing matches.
 
-    A chunk spans a page range, so a gold page inside that range counts: a
-    four-page chunk labelled p.7-10 does contain what is printed on p.9.
+    A chunk spans a page range, so a gold page inside that range counts as a hit.
     """
     if not gold:
         return 0

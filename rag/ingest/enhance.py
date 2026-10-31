@@ -1,8 +1,7 @@
 """Route each page to the rails it needs, then run only those rails.
 
-Vision calls are network-bound, so the pages that need one run concurrently
-(OCR_CONCURRENCY). Text and table pages stay serial: they are local and fast,
-and pdfplumber is not something to point two threads at.
+Vision calls are network-bound and run concurrently; text and table work stays
+serial because pdfplumber is not thread-safe.
 """
 
 import logging
@@ -193,11 +192,7 @@ def enhance(
     on_event=None,
     force: bool = False,
 ) -> dict:
-    """Run the enhancement rails and return a report. Blocks are stored on the doc.
-
-    Pages whose blocks are already persisted are reused: a vision call is paid
-    once, and a run that hit the budget can be resumed without redoing the rest.
-    """
+    """Run the enhancement rails and return a report. Blocks are stored on the doc."""
     started = time.perf_counter()
     emit = on_event or (lambda event: None)
 
@@ -384,4 +379,3 @@ def all_blocks(doc: dict) -> list[tuple[int, Block]]:
         for block in blocks_of(doc, page["page"]):
             pairs.append((page["page"], block))
     return pairs
-

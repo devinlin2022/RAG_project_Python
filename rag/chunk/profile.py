@@ -1,5 +1,4 @@
-"""Document census and strategy recommendation. No model, no embedding: only the
-text already extracted, so it stays in the millisecond range."""
+"""Document census and strategy recommendation. Text only: no model, no embedding."""
 
 from dataclasses import asdict, dataclass, field
 

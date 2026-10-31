@@ -1,8 +1,4 @@
-"""真实客户端打到假平台上：验证 401 立刻失败、429 退避后成功、精排挂了不影响回答。
-
-这些测试走的是 `rag.generate.llm` / `rag.retrieve.reranker` / `rag.embed.client`
-里真正的那几行代码，只是把 base_url 指到本地：所以断言的是行为，不是 mock 的调用次数。
-"""
+"""Every outbound client against the fake platform."""
 
 import socket
 import threading
@@ -26,7 +22,6 @@ def free_port() -> int:
 
 
 class Platform:
-    """按路径独立记脚本，模拟同一个 Key 上四条通道各自的脾气。"""
 
     def __init__(self):
         self.calls: dict[str, list[float]] = {}
@@ -127,9 +122,6 @@ def _ready(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
-# ── 问答 ────────────────────────────────────────────────────
-
-
 def test_401_fails_once_with_actionable_message(platform):
     platform.scripts["chat"] = [401]
     with pytest.raises(llm.LLMError) as caught:
@@ -162,9 +154,6 @@ def test_stream_401_raises_before_yielding(platform):
     assert platform.hits("chat") == 1
 
 
-# ── 精排 ────────────────────────────────────────────────────
-
-
 def test_rerank_scores_are_sorted(platform):
     pairs = reranker.rerank("账期", ["a", "b", "c"])
     assert [index for index, _ in pairs] == [0, 1, 2]
@@ -180,7 +169,6 @@ def test_rerank_429_raises_rate_limit_message(platform):
 
 
 def test_dead_reranker_keeps_fusion_order():
-    """精排整体挂掉时，回答仍要出得来——只是退化成融合排序。"""
     from rag.index.library import Record
     from rag.retrieve.retriever import Hit, rerank_hits
 
@@ -203,9 +191,6 @@ def test_dead_reranker_keeps_fusion_order():
     assert [hit.record.idx for hit in kept] == [0, 1], "应按融合分保持原顺序"
 
 
-# ── 向量 ────────────────────────────────────────────────────
-
-
 def test_embed_401_trips_breaker_then_reset_restores(platform):
     platform.scripts["embed"] = [401]
     with pytest.raises(embed_client.EmbedError):
@@ -214,12 +199,11 @@ def test_embed_401_trips_breaker_then_reset_restores(platform):
     assert paused and left > 0 and "401" in reason
     assert platform.hits("embed") == 1
 
-    # 熔断期间不再打网络，直接把原因说清楚
     with pytest.raises(embed_client.EmbedError) as caught:
         embed_client.embed_texts(["再来一次"])
     assert "暂停" in str(caught.value) and platform.hits("embed") == 1
 
-    embed_client.reset_breaker()          # 换 Key 后应立刻恢复
+    embed_client.reset_breaker()
     assert embed_client.breaker_state()[0] is False
     vectors = embed_client.embed_texts(["恢复了"])
     assert len(vectors) == 1 and len(vectors[0]) == 3

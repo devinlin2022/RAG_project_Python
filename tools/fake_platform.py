@@ -34,7 +34,6 @@ def port_ready(port: int, host: str = "127.0.0.1", timeout: float = 0.3) -> bool
 
 
 class FakePlatform:
-    """每个路径一份脚本，按顺序吐出状态码；到达时刻全部记账。"""
 
     def __init__(self, dim: int = 8):
         self.dim = dim
@@ -44,8 +43,6 @@ class FakePlatform:
         self.port = 0
         self._server = None
         self.app = self._build()
-
-    # ── 记账 ────────────────────────────────────────────────
 
     def _next(self, path: str) -> int:
         with self.lock:
@@ -70,8 +67,6 @@ class FakePlatform:
             self.calls.clear()
             self.scripts.clear()
 
-    # ── 路由 ────────────────────────────────────────────────
-
     def _build(self) -> FastAPI:
         app = FastAPI()
 
@@ -95,8 +90,6 @@ class FakePlatform:
                 )
             )
 
-            # 出题请求返回 JSON 数组，问答请求返回一句带引用的答案：
-            # 两种调用共用一个端点，靠提示词区分。
             if "只输出 JSON 数组" in prompt:
                 content = (
                     '[{"q": "付款账期最长是多少天？", "answer": "30 天"},'
@@ -154,8 +147,6 @@ class FakePlatform:
 
         return app
 
-    # ── 生命周期 ────────────────────────────────────────────
-
     def start(self) -> str:
         self.port = free_port()
         self._server = uvicorn.Server(
@@ -181,7 +172,6 @@ def _json_str(text: str) -> str:
 
 
 def _vector(text: str, dim: int) -> list[float]:
-    """确定性向量：同样的文本给同样的向量，余弦才有意义。"""
     import hashlib
 
     seed = hashlib.sha256(text.encode("utf-8")).digest()

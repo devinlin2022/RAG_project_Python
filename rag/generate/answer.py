@@ -1,8 +1,4 @@
-"""Page-scoped QA shared by the UI and the API.
-
-Keeping this in one place means V2 can swap manual page selection for retrieval
-without touching either entry point.
-"""
+"""Page-scoped question answering shared by the UI and the API."""
 
 from rag.config import settings
 from rag.generate.llm import chat

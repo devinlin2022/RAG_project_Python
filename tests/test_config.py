@@ -1,8 +1,4 @@
-"""Settings gates and the error text a user actually sees.
-
-These two things broke in the field: vision reported 关闭 with a working key, and
-a 401 pointed at an environment variable that no longer exists.
-"""
+"""Configuration switches and the messages that explain them."""
 
 import pytest
 

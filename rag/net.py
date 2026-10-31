@@ -1,19 +1,4 @@
-"""Shared HTTP layer: pace every call, retry only what can succeed, fail fast on the rest.
-
-Three things live here, all of them learned the hard way:
-
-1. **Pacing.** A single global interval between any two requests. The embedding,
-   rerank and vision paths all fire from thread pools (`EMBED_CONCURRENCY`,
-   `OCR_CONCURRENCY`), so without a shared gate a 20-page scan leaves as three
-   simultaneous bursts and the platform answers 429 on half of them. The lock is
-   held *across* the sleep on purpose: that is what makes concurrent callers
-   queue behind each other instead of all waking at once.
-2. **Jitter.** Plain `2**n` backoff makes every retrying thread wake at the same
-   millisecond and re-collide. A random share of the delay spreads them out.
-3. **Classification.** 401/402/403/404 and 400 will not fix themselves. Retrying
-   them three times turns a clear "your key is rejected" into a nine-second
-   pause followed by the same message, and tempts people to blame rate limits.
-"""
+"""Shared HTTP layer: request pacing, bounded retries, status classification."""
 
 import logging
 import random
@@ -44,14 +29,10 @@ def reset_pacing() -> None:
 
 
 def _pace(min_interval: float) -> None:
-    """Block until this caller's reserved slot, then return ready to send.
+    """Block until this caller's reserved slot.
 
-    Reserve the slot under the lock, sleep *outside* it. Holding the lock across
-    the sleep looks equivalent but is not: the thread that wakes up has to fight
-    for the GIL before it reaches `requests.post`, and a thread that finished its
-    sleep earlier can overtake it — the server then sees two arrivals 5ms apart
-    even though we waited 120ms. Reserving an absolute slot and sleeping to it
-    keeps arrival order aligned with the schedule.
+    The slot is reserved under the lock and waited for outside it, so arrival
+    order stays aligned with the schedule under concurrency.
     """
     global _last_call
     if min_interval <= 0:
@@ -96,11 +77,7 @@ def post_json(
     base_delay: float = 1.0,
     stream: bool = False,
 ):
-    """Paced POST with bounded retries. Returns the response for the caller to explain.
-
-    Non-retryable statuses are returned immediately; the caller owns the message
-    because only it knows whether the call was chat, embed, rerank or vision.
-    """
+    """Paced POST with bounded retries; returns the response for the caller to explain."""
     response = None
     for attempt in range(max(0, retries) + 1):
         _pace(min_interval)

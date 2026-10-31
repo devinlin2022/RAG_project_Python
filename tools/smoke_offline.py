@@ -1,14 +1,4 @@
-"""端到端自检：不用真 Key，也能把整条链路跑一遍。
-
-    python -m tools.smoke_offline
-
-它做的事和真人操作一致：吃一份示例 PDF → 解析 → 建索引 → 提问（流式）→
-自动出题 → 两种模式各跑一次评测，每一步都断言，最后再把平台换成"一直 401"
-重跑一次，确认失败时只打一次请求、给的是能照着做的话。
-
-意义在于：平台那边到底是 Key 失效、余额不足还是限流，本地分不清，但**我们的
-处理对不对**可以在本地分清。Colab 上出了问题，先跑这个，能排除掉整整一半可能。
-"""
+"""End-to-end check against a fake platform, no network needed."""
 
 from __future__ import annotations
 
@@ -31,9 +21,6 @@ def check(label: str, ok: bool, detail: str = "") -> None:
         _failures.append(label)
 
 
-# 节流要量的是"客户端什么时候把请求发出去"。服务端记录的到达时间不行：
-# 假平台是本地线程，几个处理线程会被成批唤醒，20ms 的发送间隔在到达端能压成 3ms，
-# 于是这条断言会时好时坏——坏的时候不是节流坏了，是尺子坏了。
 _SEND_STAMPS: list[float] = []
 
 
@@ -55,11 +42,10 @@ def send_gaps() -> list[float]:
 
 
 def _configure(base_url: str, db_name: str) -> None:
-    """必须在 import rag.config 之前设置：配置是模块级单例，导入即冻结。"""
     os.environ["SILICONFLOW_BASE_URL"] = base_url
     os.environ["SILICONFLOW_API_KEY"] = "sk-offline-smoke-test"
     os.environ["DB_FILENAME"] = db_name
-    os.environ["OCR_ENABLED"] = "false"          # 扫描页 OCR 不在这次验证范围内
+    os.environ["OCR_ENABLED"] = "false"
     os.environ["RERANK_ENABLED"] = "true"
     os.environ["HTTP_MIN_INTERVAL"] = "0.02"
     os.environ["HTTP_RETRIES"] = "2"
@@ -71,7 +57,7 @@ def _configure(base_url: str, db_name: str) -> None:
 def run_happy_path(platform) -> None:
     from rag.config import settings
     from app.state import get_service
-    from rag.service import ServiceError  # noqa: F401  (确认异常类型可导入)
+    from rag.service import ServiceError
 
     print("\n[1] 正常链路")
     service = get_service()
@@ -88,12 +74,11 @@ def run_happy_path(platform) -> None:
           f"{info['chunks']} 块 / {info['dim']} 维 / 向量化 {info['embed_ms']:.0f}ms")
     check("向量化没有退化成关键词", not info["embed_error"], info["embed_error"])
 
-    # ── 流式问答 ──
     started = time.perf_counter()
     pieces: list[str] = []
     done: dict = {}
     for event in service.ask_stream("付款账期最长是多少天？", mode="fast"):
-        if isinstance(event, tuple):      # (阶段名, 中间结果) —— 流水线事件，不关心
+        if isinstance(event, tuple):
             continue
         stage = event.get("stage")
         if stage == "delta":
@@ -112,7 +97,6 @@ def run_happy_path(platform) -> None:
     usage = done.get("usage") or {}
     check("记录了 token 用量", bool(usage.get("total_tokens")), str(usage.get("total_tokens")))
 
-    # ── 自动出题 ──
     print("\n[2] 自动出题")
     bundle = service.generate_questions(doc_ids=[doc_id], limit=4)
     questions = bundle["questions"]
@@ -123,7 +107,6 @@ def run_happy_path(platform) -> None:
     for item in questions[:3]:
         print(f"      p.{item['pages'][0]}　{item['q']}")
 
-    # ── 两模式评测 ──
     print("\n[3] 两种模式评测（只检索，不生成）")
     for mode in ("fast", "enhanced"):
         result = service.evaluate(top_k=5, mode=mode, doc_ids=[doc_id], questions=questions)
@@ -132,7 +115,6 @@ def run_happy_path(platform) -> None:
               f"hit@{summary['k']} {summary['hit']:.0%} ｜ "
               f"MRR {summary['mrr']:.3f} ｜ {summary['questions']} 题")
 
-    # ── 节流 ──
     print("\n[4] 请求节流")
     gaps = send_gaps()
     interval = settings.http_min_interval
@@ -145,7 +127,6 @@ def run_happy_path(platform) -> None:
 
 
 def run_auth_failure(platform) -> None:
-    """把平台切成永久 401，确认我们只打一次、并且说人话。"""
     from rag.config import settings
     from rag.generate import llm
 

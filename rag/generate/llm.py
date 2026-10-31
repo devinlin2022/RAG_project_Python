@@ -1,4 +1,4 @@
-"""OpenAI-compatible chat client. Non-streaming and SSE streaming."""
+"""OpenAI-compatible chat client: blocking and SSE streaming."""
 
 import json
 import logging

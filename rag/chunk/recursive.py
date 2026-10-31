@@ -1,4 +1,4 @@
-"""Recursive character splitter. Control arm, not the default."""
+"""Recursive character splitter, kept as the control arm."""
 
 from rag.chunk.types import Chunk
 

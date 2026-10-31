@@ -1,8 +1,4 @@
-"""网络层的行为测试：节流真的错开了、401 不重试、429/5xx 才会重试。
-
-用一台本地假服务器记账（每条请求的到达时间 + 次数），不碰真实平台：
-这样"间隔够不够"和"重试了几次"都是可断言的事实，而不是看日志猜。
-"""
+"""Request pacing, backoff and status classification."""
 
 import socket
 import threading
@@ -23,7 +19,6 @@ def free_port() -> int:
 
 
 class FakePlatform:
-    """记录到达时刻的假硅基流动：按 script 依次返回状态码。"""
 
     def __init__(self):
         self.hits: list[float] = []
@@ -95,7 +90,6 @@ def post(fake, path="call", **kwargs):
 
 
 def test_concurrent_calls_are_spaced(platform):
-    """4 个线程同时打，到达时间必须被拉开到 min_interval 以上。"""
     net.reset_pacing()
     threads = [
         threading.Thread(target=lambda: post(platform, min_interval=0.2)) for _ in range(4)
@@ -115,11 +109,6 @@ def test_concurrent_calls_are_spaced(platform):
 
 
 def test_pacing_reserves_a_slot_per_caller():
-    """_pace 返回的那一刻就该轮到我了：并发调用者拿到的时刻必须彼此错开。
-
-    这条不经过网络，所以量的是节流本身而不是服务端线程调度——服务端记录的
-    到达时间会把 120ms 压成几毫秒，据此判断会时灵时不灵。
-    """
     net.reset_pacing()
     stamps: list[float] = []
     lock = threading.Lock()
@@ -188,7 +177,6 @@ def test_timeout_is_retried(platform):
 
 
 def test_backoff_grows_and_carries_jitter():
-    # 每一档都比上一档的*最小*值大，所以带抖动也仍然单调
     plain = [net.backoff_delay(attempt) for attempt in range(4)]
     assert all(b > a for a, b in zip(plain, plain[1:])), "退避必须递增"
 

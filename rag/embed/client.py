@@ -1,4 +1,4 @@
-"""Embedding client. Vector index, semantic breakpoints, one HTTP shape."""
+"""Embedding client: batch requests, dimension checks, one HTTP shape."""
 
 import logging
 import time

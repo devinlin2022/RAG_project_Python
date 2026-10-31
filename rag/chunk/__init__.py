@@ -1,3 +1,5 @@
+"""Chunking strategies and the document profile they are chosen from."""
+
 from rag.chunk.profile import DocProfile, profile_document
 from rag.chunk.registry import LABELS, STRATEGIES, chunk_document, compare_strategies
 from rag.chunk.types import Chunk, Section

@@ -1,9 +1,4 @@
-"""History-aware query rewrite.
-
-A follow-up such as "那二级授权呢" cannot be embedded on its own: every pronoun
-is a reference to the previous turn. Rewriting it into a standalone question
-before retrieval is cheaper than embedding the whole conversation.
-"""
+"""Turn a follow-up question into a self-contained one."""
 
 import logging
 import re

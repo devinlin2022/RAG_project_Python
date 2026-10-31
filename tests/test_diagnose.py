@@ -1,4 +1,4 @@
-"""站点诊断：.cn 与 .com 的 Key 不通用，这件事必须由程序说出来。"""
+"""Failure explanation: wrong site, unknown model."""
 
 import pytest
 
@@ -65,7 +65,7 @@ def test_balance_only_account_is_reported_as_such(monkeypatch):
 
 
 def test_custom_host_never_probes(monkeypatch):
-    def boom(*args, **kwargs):  # 不该被调用
+    def boom(*args, **kwargs):
         raise AssertionError("自定义地址不该偷偷发请求")
 
     monkeypatch.setattr(diagnose.requests, "get", boom)

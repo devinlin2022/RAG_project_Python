@@ -221,14 +221,12 @@ def test_documents_survive_a_restart(offline, sample_pdf, tmp_path):
 
 
 def test_vector_dimension_survives_a_restart(offline, service, sample_pdf, tmp_path):
-    """维度不进内存就等于没存：重启后每份文档都显示 0 维，看着像向量化失效。"""
     db_path = tmp_path / "dim.sqlite"
     first = Service(Database(db_path))
     doc, _ = first.ingest(sample_pdf)
     info = first.index(doc["id"])
-    assert info["dim"] == 0  # offline 下没有向量
+    assert info["dim"] == 0
 
-    # 手工假装当初带向量建成过
     first.docs[doc["id"]]["dim"] = 1024
     first.docs[doc["id"]]["chunk_count"] = info["chunks"]
     first.db.upsert_doc(first._meta(first.docs[doc["id"]]))
@@ -238,16 +236,14 @@ def test_vector_dimension_survives_a_restart(offline, service, sample_pdf, tmp_p
 
 
 def test_index_backfills_vectors_after_the_key_comes_back(offline, service, sample_pdf, monkeypatch):
-    """Key 坏的时候建的索引只有关键词。Key 修好后不能一直跳过补向量。"""
     doc, _ = service.ingest(sample_pdf)
     first = service.index(doc["id"])
     assert first["dim"] == 0 and service.library.stats()["vectors"] == 0
 
-    # Key 恢复：向量化可用
     _embed_stub(monkeypatch, service)
     monkeypatch.setattr(settings, "embed_api_key", "sk-test")
 
-    again = service.index(doc["id"])  # 没有 force
+    again = service.index(doc["id"])
     assert again["skipped"] is False, "维度为 0 时不应跳过，必须补算向量"
     assert again["dim"] == 8
     assert service.library.stats()["vectors"] > 0
@@ -283,7 +279,6 @@ def test_rerank_path_is_wired(offline, service, sample_pdf, monkeypatch):
 
 
 def test_compare_modes_reports_both_runs_and_advice(offline, service, sample_pdf):
-    """The panel behind 「要不要用增强检索」 must run retrieval twice, no model."""
     doc, _ = service.ingest(sample_pdf)
     service.index(doc["id"])
 
@@ -292,8 +287,8 @@ def test_compare_modes_reports_both_runs_and_advice(offline, service, sample_pdf
     assert [row["mode"] for row in report["rows"]] == ["fast", "enhanced"]
     fast, enhanced = report["rows"]
     assert 0.0 <= fast["coverage"] <= 1.0 and 0.0 <= enhanced["coverage"] <= 1.0
-    assert enhanced["hits"] >= fast["hits"]          # 更宽的候选池
-    assert report["advice"]                          # 没有建议就是没结论
+    assert enhanced["hits"] >= fast["hits"]
+    assert report["advice"]
     assert report["query"] == "approval flow"
 
 

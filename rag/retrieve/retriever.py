@@ -1,9 +1,7 @@
-"""Dense, lexical and fused retrieval. One generator, three strategies.
+"""Dense, lexical and fused retrieval as one generator of stages.
 
-The rails are independent, so they run in two threads and the caller is told
-about each stage as it lands -- that is what the UI's thinking panel renders.
-`search()` consumes the same generator, so the trace can never drift from what
-actually happened.
+The rails are independent, so they run in parallel and the caller is told about
+each stage as it lands. `search()` consumes the same generator.
 """
 
 import time
@@ -53,10 +51,10 @@ def search_steps(
     doc_ids: list[str] | None = None,
     rrf_k: int = 60,
 ) -> Iterator[tuple[str, dict]]:
-    """Yield ("dense_start"|"dense_done"|..., payload) and finally ("final", ...).
+    """Yield (stage, payload) events, then ("final", payload).
 
-    When the vector index is empty (no embedding key) a dense request degrades
-    to sparse instead of returning nothing, and `info["degraded"]` says so.
+    With an empty vector index a dense request degrades to sparse and says so in
+    `info["degraded"]`.
     """
     info: dict = {"degraded": ""}
     pool = max(candidates, top_k)
@@ -184,11 +182,10 @@ def search(
 
 
 def diversify(hits: list[Hit], top_k: int) -> list[Hit]:
-    """Keep one chunk per page, so every citation slot adds new evidence.
+    """Keep one chunk per page so every citation slot adds new evidence.
 
-    A paragraph split across two chunks can occupy two of six slots and cite the
-    same page twice. The dropped duplicates are replaced from deeper ranks, which
-    is why this runs before the final truncation rather than after.
+    Dropped duplicates are replaced from deeper ranks, which is why this runs
+    before the final truncation.
     """
     seen: set[tuple[str, int]] = set()
     kept: list[Hit] = []

@@ -134,7 +134,7 @@ def test_step_states_mark_what_is_done():
     states = step_states(doc, [_Chunk(0, 1, 1, 100)])
     by_key = {item["key"]: item["done"] for item in states}
     assert by_key["upload"] and by_key["parse"] and by_key["chunks"]
-    assert not by_key["metrics"]          # 评测要跑过才算完成
+    assert not by_key["metrics"]
     assert "2 页" not in states[1]["hint"] and "8 页" in states[1]["hint"]
 
 

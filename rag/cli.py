@@ -1,11 +1,4 @@
-"""Headless pipeline, for scripts and for CI.
-
-    python -m rag.cli list
-    python -m rag.cli ingest data/samples/demo-policy.pdf --index
-    python -m rag.cli index --doc demo-policy --force
-    python -m rag.cli ask "付款账期最长是多少天？" --doc demo-policy
-    python -m rag.cli eval --top-k 5 --generate
-"""
+"""Headless pipeline: ingest, index and ask without the UI."""
 
 import argparse
 import sys

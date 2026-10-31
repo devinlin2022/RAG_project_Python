@@ -1,8 +1,7 @@
 """Configuration loaded from .env and validated at import time.
 
-One credential, one base URL: every SiliconFlow capability (chat, embedding,
-rerank, vision) reads the same key unless you deliberately override it. That is
-the whole point of this module -- a user should only have to paste one key.
+Chat, embedding, rerank and vision read the same key unless one is
+deliberately overridden.
 """
 
 from pathlib import Path
@@ -92,8 +91,7 @@ class Settings(BaseSettings):
 
     # ── vision rails (OCR / figure caption) ─────────────────────────
     # On by default: the moment a key resolves, scanned pages should be read.
-    # Set OCR_ENABLED=false to keep the vision model out of the loop entirely
-    # (that is the only reason a configured key would ever show "关闭").
+    # Set OCR_ENABLED=false to keep the vision model out of the loop entirely.
     ocr_enabled: bool = True
     ocr_base_url: str = ""
     ocr_api_key: str = ""
@@ -192,11 +190,7 @@ class Settings(BaseSettings):
 
     @property
     def vision_state(self) -> tuple[bool, str]:
-        """Why the vision rail is (not) available -- the status line needs a reason.
-
-        Two different switches used to look identical in the UI: "no key" and
-        "user turned it off". They are not the same thing to a reader.
-        """
+        """Why the vision rail is (not) available: no key, disabled, or ready."""
         if not self.ocr_enabled:
             return False, "已按 OCR_ENABLED=false 关闭"
         if not self.ocr_api_key_resolved:

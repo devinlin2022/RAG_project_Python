@@ -1,9 +1,7 @@
-"""Gradio UI: a document workbench and a question box, in that order.
+"""Gradio UI: a document workbench and a question box.
 
-The workbench is six numbered steps (upload -> parse -> chunks -> pages ->
-source -> metrics) laid out as a directory, because the whole pipeline on one
-screen was unreadable. Rendering and event binding only: every handler
-delegates to rag.service.
+The workbench is six steps (upload, parse, chunks, pages, source, metrics).
+Rendering and event binding only: every handler delegates to rag.service.
 """
 
 import html
@@ -31,20 +29,18 @@ COMPARE_HEADERS = ["模式", "命中块", "覆盖页", "页覆盖率", "首位�
 
 MODE_CHOICES = [("快速检索", "fast"), ("增强检索", "enhanced")]
 
-# Which pipeline steps each mode actually runs. Fast mode merges the two rails
-# into one line on purpose: showing five rows for a 900 ms path reads as noise.
 PLAN_STEPS = {
     "fast": ["embed", "retrieve", "generate"],
     "enhanced": ["rewrite", "embed", "dense", "sparse", "fusion", "rerank", "generate"],
 }
 
 STEPS = [
-    ("upload", "上传建索引", "文件解析、切块、算向量"),
-    ("parse", "解析结果", "格式识别与逐页文本量"),
-    ("chunks", "分块地图", "每块的位置、类型、字数"),
-    ("pages", "页级诊断", "每页的扫描 / 表格 / 图形信号"),
-    ("text", "原文查看", "逐页核对识别结果"),
-    ("metrics", "检索指标", "两种模式在这份文档上的实测表现"),
+    ("upload", "上传建索引", "解析 · 切块 · 向量化"),
+    ("parse", "解析结果", "格式与每页文本量"),
+    ("chunks", "分块地图", "块位置 · 类型 · 字数"),
+    ("pages", "页级诊断", "扫描 / 表格 / 图形信号"),
+    ("text", "原文查看", "逐页文本"),
+    ("metrics", "检索指标", "两种模式实测"),
 ]
 STEP_LABELS = {key: label for key, label, _ in STEPS}
 
@@ -87,14 +83,10 @@ def _doc_choices(service: Service) -> list[tuple[str, str]]:
 def _doc_rows(service: Service) -> list[list]:
     return [
         [
-            # 业务视角只看"这份文档进来了没有、切了几块"。
-            # 内部 ID、字符数、是否增强放到「解析明细」里，别挤在这张表上。
             row["filename"],
             row["format"],
             row["pages"],
             row["chunks"],
-            # 「已建索引」不等于向量可用：Key 出问题时块照样切，只是没有向量。
-            # 这两种状态外观必须能分开，否则用户会以为增强检索在用，其实在跑关键词。
             (
                 "已建索引"
                 if row.get("dim")
@@ -154,11 +146,7 @@ def _bar(pct: float, color: str, height: int = 7) -> str:
 
 
 def flow_html(steps: list[dict]) -> str:
-    """The six-step directory as a stepper: what has been done to this file.
-
-    A tab bar tells you what exists; this tells you what has actually been done
-    to the document, which is the part a reader cannot infer from a filename.
-    """
+    """The six-step directory as a stepper, with per-step state."""
     chips = []
     for index, step in enumerate(steps):
         done = step.get("done")
@@ -184,7 +172,7 @@ def step_states(doc: dict | None, chunks: list) -> list[dict]:
             bool(doc),
         ),
         "text": ("按页查看原文" if doc else "选择文档后展开", bool(doc)),
-        "metrics": ("跑一次评测看两种模式", False),
+        "metrics": ("尚无评测结果", False),
     }
     return [
         {"key": key, "label": label, "hint": hints[key][0], "done": hints[key][1]}
@@ -211,7 +199,7 @@ def page_strip_html(doc: dict | None) -> str:
     return (
         "<div class='fb-strip'>" + "".join(cells) + "</div>"
         "<div class='fb-strip-note'>"
-        f"<span>{len(chars)} 页</span><span>颜色越深文字越多</span>"
+        f"<span>{len(chars)} 页</span>"
         f"<span>低于 {settings.scan_page_char_threshold} 字的页 {thin} 页</span></div>"
     )
 
@@ -282,7 +270,7 @@ def chunk_map_html(
         for name, color in KIND_STYLE.values()
     )
 
-    sub = "按字数成比例 · 红框为被引用页" if hits else "按字数成比例 · 颜色为块类型"
+    sub = "红框为被引用页" if hits else ""
     return (
         "<div class='fb-card'><div class='fb-card-head'>"
         f"<div><div class='fb-card-title'>{title}</div>"
@@ -291,7 +279,7 @@ def chunk_map_html(
         "<div class='fb-card-body tight'>"
         "<div class='fb-strip'>" + "".join(cells) + "</div>"
         "<div class='fb-strip-note'>"
-        f"<span>{pages} 页</span><span>颜色越深文字越多</span>"
+        f"<span>{pages} 页</span>"
         + ("<span>红框＝被引用页</span>" if hits else "")
         + "</div>"
         "<div class='fb-map'>" + "".join(rows) + more + "</div>"
@@ -319,45 +307,39 @@ def chunk_summary_md(chunks: list) -> str:
 
 
 STEP_TITLES = {
-    "rewrite": ("理解问题", "把追问补全成可独立检索的问题"),
-    "embed": ("向量化查询", "把问题编码成与块同一空间的向量"),
-    "dense": ("向量检索", "余弦相似度，取最近的候选块"),
-    "sparse": ("关键词检索", "BM25，对编号、金额、缩写更敏感"),
-    "fusion": ("融合排序", "RRF 合并两路名次，不比较分数量纲"),
-    "rerank": ("精排", "交叉编码器逐条重算相关性"),
-    "retrieve": ("并行检索", "向量 + 关键词两路同时开跑，按名次融合"),
-    "generate": ("生成回答", "只依据命中块作答并标注引用"),
+    "rewrite": "理解问题",
+    "embed": "向量化查询",
+    "dense": "向量检索",
+    "sparse": "关键词检索",
+    "fusion": "融合排序",
+    "rerank": "精排",
+    "retrieve": "并行检索",
+    "generate": "生成回答",
 }
 
 _STATUS_MARK = {"pending": "·", "running": "<i></i>", "done": "✓", "skip": "–", "error": "!"}
-
-_LEAN_FOOT = (
-    "<div class='fb-trace-foot'>快速检索到此为止：两路检索并行、按名次融合后直接作答。"
-    "切到<b>增强检索</b>会多出改写、BM25 分词、RRF 融合与精排前后分对比。</div>"
-)
 
 
 def plan_steps(mode: str) -> list[dict]:
     """Pre-seed the whole plan as pending, so the panel is not empty while waiting."""
     keys = PLAN_STEPS.get(mode, PLAN_STEPS["fast"])
-    return [{"key": key, "title": STEP_TITLES[key][0], "status": "pending", "detail": "", "meta": ""} for key in keys]
+    return [
+        {"key": key, "title": STEP_TITLES[key], "status": "pending", "detail": "", "meta": ""}
+        for key in keys
+    ]
 
 
 def render_trace(steps: list[dict], mode: str = "fast") -> str:
-    """Vertical timeline of the pipeline. Every line carries a measured number."""
+    """Vertical timeline of the pipeline, one measured line per stage."""
     title = "增强检索流水线" if mode == "enhanced" else "快速检索"
     if not steps:
         keys = PLAN_STEPS.get(mode, PLAN_STEPS["fast"])
-        names = " → ".join(STEP_TITLES[key][0] for key in keys)
-        note = (
-            "提问后这里会逐条亮起，每条都带实测数字。"
-            if not mode
-            else f"提问后这里按顺序亮起：{names}。"
-        )
+        names = " → ".join(STEP_TITLES[key] for key in keys)
+        note = "提问后按顺序执行：" + names
         return (
             "<div class='fb-card'><div class='fb-card-head'>"
             f"<div><div class='fb-card-title'>{title}</div>"
-            f"<div class='fb-card-sub'>{len(keys)} 步 · 每题实时计时</div></div>"
+            f"<div class='fb-card-sub'>{len(keys)} 步</div></div>"
             f"<span class='fb-badge'>{len(keys)} 步</span></div>"
             f"<div class='fb-card-body'><div class='fb-trace'><div class='fb-empty'>{note}</div>"
             "</div></div></div>"
@@ -382,20 +364,16 @@ def render_trace(steps: list[dict], mode: str = "fast") -> str:
         )
 
     pct = done / total * 100 if total else 0
-    foot = _LEAN_FOOT if mode == "fast" and all(
-        step.get("status") in ("done", "skip", "error") for step in steps
-    ) else ""
     return (
         "<div class='fb-card'><div class='fb-card-head'>"
         f"<div><div class='fb-card-title'>{title}</div>"
-        f"<div class='fb-card-sub'>{total} 步 · 每一步都带实测数字</div></div>"
+        f"<div class='fb-card-sub'>{total} 步</div></div>"
         f"<span class='fb-badge {'green' if done == total else ''}'>{done}/{total}</span></div>"
         "<div class='fb-card-body'>"
         "<div class='fb-trace'>"
         "<div class='fb-progress'><i style='width:%.0f%%'></i></div>" % pct
         + "".join(rows)
         + "</div>"
-        + foot
         + "</div></div>"
     )
 
@@ -482,7 +460,7 @@ def _result_markdown(result: dict) -> str:
 
 
 def compare_markdown(report: dict) -> str:
-    """Two modes, same question, retrieval only -- then one sentence of advice."""
+    """Both modes on the same question, retrieval only."""
     rows = report.get("rows", [])
     if not rows:
         return "没有可对比的结果。"
@@ -499,22 +477,16 @@ def compare_markdown(report: dict) -> str:
             f"{row['margin']:.4f} | {'是' if row['rerank_used'] else '否'} | {row['ms']:.0f} ms |"
         )
     delta = enhanced["coverage"] - fast["coverage"]
-    lines += [
-        "",
-        f"- 页覆盖率差 **{delta:+.0%}**（覆盖页 / 范围内全部页，越高说明证据面越广）",
-        f"- 首位优势是第 1 名与其余命中块的平均分差，越大说明排序越有把握",
-        "",
-        f"> {report['advice']}",
-    ]
+    lines += ["", f"- 页覆盖率差 **{delta:+.0%}**", "", f"> {report['advice']}"]
     return "\n".join(lines)
 
 
 def eval_markdown(result: dict) -> str:
-    """Golden-set numbers for one mode, phrased as what they actually measure."""
+    """Hit rate and MRR for one mode."""
     summary = result.get("summary") or {}
     rows = result.get("rows") or []
     if not rows:
-        return "没有可评测的问题：请先入库示例文档，或检查 `eval/golden.jsonl` 的 doc 字段。"
+        return "没有可评测的问题：请先入库示例文档。"
     answerable = [row for row in rows if row.get("answerable", True)]
     abstain = len(rows) - len(answerable)
     missed = [row for row in answerable if not row["hit"]]
@@ -524,7 +496,7 @@ def eval_markdown(result: dict) -> str:
         else f"- 有标注页码的题 {len(answerable)} 条全部命中前 {summary['k']}"
     )
     if abstain:
-        tail += f"；另有 {abstain} 条故意无答案，只检验拒答，不计入命中率"
+        tail += f"；另有 {abstain} 条无答案题，仅检验拒答"
     return (
         f"命中率 hit@{summary['k']} **{summary['hit']:.1%}**　｜　"
         f"首位命中 MRR **{summary['mrr']:.3f}**　｜　题目 {summary['questions']} 条\n\n"
@@ -558,8 +530,7 @@ def _system_markdown(service: Service) -> str:
         f"| 提问次数 | {usage['requests']} |\n"
         f"| tokens（入 / 出 / 合计） | {usage['llm_in']:,} / {usage['llm_out']:,} / {usage['total_tokens']:,} |\n"
         f"| 向量化 tokens | {usage['embed']:,}（{price}） |\n"
-        f"| 接口访问保护 | {'需要 X-API-Key' if info['security']['api_key_required'] else '未开启'}"
-        f"（与模型 Key 无关） |\n"
+        f"| 接口访问保护 | {'需要 X-API-Key' if info['security']['api_key_required'] else '未开启'} |\n"
         f"| 界面登录 | {'需要密码' if info['security']['ui_login'] else '未开启'} |\n"
     )
 
@@ -592,7 +563,7 @@ def brand_html() -> str:
 
 
 def rail_status_html(service: Service) -> str:
-    """Four dots, not a table: whether each model is actually reachable."""
+    """One status dot per model."""
     info = service.system_info()
     ocr = info["ocr"]
     rows = [
@@ -613,8 +584,8 @@ def pro_hint_html() -> str:
     return (
         "<div class='fb-pro-hint'>"
         f"<span class='fb-hint-icon'>{icon('lock', 13)}</span>"
-        "<div><b>页级诊断</b>与<b>检索指标</b>属于专业视图。"
-        "切到增强检索后解锁完整流水线、精排日志与评测。</div></div>"
+        "<div><b>页级诊断</b>与<b>检索指标</b>为专业视图，"
+        "切换到增强检索后可用。</div></div>"
     )
 
 
@@ -631,7 +602,7 @@ def chat_head_html() -> str:
         "<div class='fb-chat-head'>"
         f"<div class='fb-chat-avatar'>{icon('chat', 18)}</div>"
         "<div><div class='fb-chat-name'>文档问答<span class='fb-live'>在线</span></div>"
-        "<div class='fb-chat-meta'>回答只依据命中的块，每个结论都带引用编号</div></div>"
+        "<div class='fb-chat-meta'>回答基于命中的块，并标注引用编号</div></div>"
         "</div>"
     )
 
@@ -640,11 +611,11 @@ def mode_badge_html(mode: str) -> str:
     if mode == "enhanced":
         return (
             "<span class='fb-badge blue'>增强检索</span>"
-            "<div class='fb-badge-note'>改写 + 精排已启用</div>"
+            "<div class='fb-badge-note'>改写 + 精排</div>"
         )
     return (
         "<span class='fb-badge'>快速检索</span>"
-        "<div class='fb-badge-note'>两路并行，直接作答</div>"
+        "<div class='fb-badge-note'>向量 + 关键词</div>"
     )
 
 
@@ -678,15 +649,46 @@ THEME = gr.themes.Base(
 )
 
 
+def initial_view(service: Service) -> dict:
+    """State of the most recent document, used to seed the panels on load."""
+    rows = service.list_documents()
+    doc = service.docs.get(rows[-1]["id"]) if rows else None
+    if doc is None:
+        return {}
+    chunks = [c for c in service.library.records if c.doc_id == doc["id"]]
+    page_rows, pages = _page_rows(doc)
+    first = pages[0] if pages else None
+    scan_note = (
+        f"- {len(doc['scan_like_pages'])} 页文字量低于阈值，可用增强识别重读；"
+        "或在「解析明细」中核对每页字符量。"
+        if doc["scan_like_pages"]
+        else "- 文本层完整，没有需要 OCR 的页。"
+    )
+    return {
+        "doc_id": doc["id"],
+        "chunks": chunks,
+        "chunk_choices": [(f"#{c.idx} · {c.chars} 字 · {c.kind}", c.idx) for c in chunks],
+        "page_rows": page_rows,
+        "pages": pages,
+        "page_text": page_text_view(doc, first) if first else "",
+        "summary": _doc_summary(doc),
+        "strip": page_strip_html(doc),
+        "map": chunk_map_html(chunks),
+        "chunk_summary": chunk_summary_md(chunks) or "尚未建立索引。",
+        "note": scan_note,
+        "flow": flow_html(step_states(doc, chunks)),
+    }
+
+
 def build_ui(service: Service) -> gr.Blocks:
     vision_note = settings.vision_state[1]
+    view = initial_view(service)
 
-    # Gradio 6 takes theme/css/head at mount time, not at Blocks() time. The
-    # app mounts through app.main.gr_mount, which passes THEME / CSS / HEAD.
+    # Gradio 6 takes theme/css/head at mount time; app.main.gr_mount passes them.
     with gr.Blocks(title=f"文档助手 v{VERSION}") as demo:
-        doc_state = gr.State(None)
-        page_state = gr.State([])
-        chunk_state = gr.State([])
+        doc_state = gr.State(view.get("doc_id"))
+        page_state = gr.State(view.get("pages", []))
+        chunk_state = gr.State(view.get("chunks", []))
         source_state = gr.State([])
         history_state = gr.State([])
         gen_state = gr.State([])
@@ -714,9 +716,8 @@ def build_ui(service: Service) -> gr.Blocks:
 
             # ───────────────────────── main column ─────────────────────────
             with gr.Column(scale=1, elem_id="fb-main"):
-                flow = gr.HTML(flow_html(step_states(None, [])), elem_id="fb-flowbar")
+                flow = gr.HTML(view.get("flow") or flow_html(step_states(None, [])), elem_id="fb-flowbar")
 
-                # ---- 对话 ----
                 with gr.Column(visible=True, elem_id="panel-chat") as panel_chat:
                     with gr.Row(elem_id="fb-chatpage"):
                         with gr.Column(scale=1, elem_id="fb-chatcard"):
@@ -728,7 +729,6 @@ def build_ui(service: Service) -> gr.Blocks:
                                     elem_id="fb-scope",
                                 )
                                 mode_badge = gr.HTML(mode_badge_html("fast"))
-                            # 空库时这里就是入口：不摆一个上传框，用户不知道对话从哪开始。
                             with gr.Row(elem_id="fb-chat-upload"):
                                 chat_upload = gr.File(
                                     label="先把文档放进来：PDF / Word / PPT / Excel / Markdown，可多选",
@@ -745,15 +745,15 @@ def build_ui(service: Service) -> gr.Blocks:
                                 container=False, group_consecutive_messages=False,
                                 elem_id="fb-chat",
                                 placeholder=(
-                                    "先上传文档，或直接提问。\n"
-                                    "试试：付款账期最长是多少天？· 供应商准入需要什么材料？"
+                                    "上传文档后开始提问。\n"
+                                    "例如：付款账期最长是多少天？"
                                 ),
                             )
                             answer_meta = gr.Markdown(elem_id="fb-answer-meta")
                             with gr.Row(elem_id="fb-composer"):
                                 chat_input = gr.Textbox(
                                     show_label=False, container=False, lines=1, max_lines=5,
-                                    placeholder="问点什么，例如：付款账期最长是多少天？",
+                                    placeholder="输入问题，例如：付款账期最长是多少天？",
                                     elem_id="fb-input",
                                 )
                                 send_btn = gr.Button("发送", elem_id="fb-send")
@@ -771,18 +771,14 @@ def build_ui(service: Service) -> gr.Blocks:
                                 with gr.Row():
                                     source_dd = gr.Dropdown(label="展开原文", choices=[], value=None, scale=3)
                                     source_box = gr.Textbox(label="块原文", lines=8, max_lines=24, scale=9)
-                            with gr.Accordion("要不要用增强检索？", open=False):
-                                compare_btn = gr.Button("对比两种模式给这个问题")
-                                compare_md = gr.Markdown(
-                                    "上一次提问之后点这里：两种模式各检索一次（不调用生成模型），"
-                                    "直接看增强多带回了哪些页、又挤掉了哪些页。"
-                                )
+                            with gr.Accordion("模式对比", open=False):
+                                compare_btn = gr.Button("对比两种模式")
+                                compare_md = gr.Markdown("对比上一个问题在两种模式下的检索结果。")
 
-                # ---- 文档与解析 ----
                 with gr.Column(visible=False, elem_id="panel-docs") as panel_docs:
                     gr.HTML(page_head_html(
                         "文档与解析",
-                        "上传后立刻解析：先看清它被认成什么格式、每页有多少字，再决定要不要建索引。",
+                        "上传文件、查看解析结果、建立索引。",
                     ))
                     with gr.Row(elem_id="fb-docs-grid"):
                         with gr.Column(scale=4):
@@ -792,7 +788,7 @@ def build_ui(service: Service) -> gr.Blocks:
                                 file_count="multiple",
                             )
                             auto_index = gr.Checkbox(label="入库后自动建索引", value=True)
-                            with gr.Accordion("顺便做增强识别（扫描页 OCR / 图表描述，会计费）", open=False):
+                            with gr.Accordion("增强识别（扫描页 OCR / 图表描述，会计费）", open=False):
                                 do_enhance = gr.Checkbox(label="入库后立即增强", value=False)
                                 limit_pages = gr.Slider(
                                     label="最多调用模型的页数", minimum=1, maximum=60,
@@ -801,21 +797,20 @@ def build_ui(service: Service) -> gr.Blocks:
                             upload_btn = gr.Button("解析并入库", variant="primary")
                             status = gr.Markdown(
                                 "支持 PDF、Word、PPT、Excel、CSV、Markdown、TXT、HTML。"
-                                f"视觉模型当前：{settings.ocr_model}（{vision_note}）。"
+                                f"视觉模型：{_short(settings.ocr_model)}（{vision_note}）。"
                             )
                         with gr.Column(scale=8):
-                            # 默认只露文档列表；索引参数与解析明细收起来，
-                            # 免得非专业用户一进页面就被十来个数字吓回去。
                             with gr.Accordion("文档列表", open=True):
                                 doc_table = gr.Dataframe(
                                     headers=DOC_HEADERS, value=_doc_rows(service),
                                     interactive=False, wrap=True, show_label=False,
                                     elem_id="fb-doc-table",
                                 )
-                            with gr.Accordion("索引与维护（先选中一篇再操作）", open=False):
+                            with gr.Accordion("索引与维护", open=False):
                                 with gr.Row(elem_id="fb-toolbar"):
                                     doc_dd = gr.Dropdown(
-                                        label="当前文档", choices=_doc_choices(service), value=None, scale=3
+                                        label="当前文档", choices=_doc_choices(service),
+                                        value=view.get("doc_id"), scale=3,
                                     )
                                     chunk_size = gr.Slider(
                                         label="块长上限（字）", minimum=200, maximum=1200,
@@ -823,55 +818,60 @@ def build_ui(service: Service) -> gr.Blocks:
                                     )
                                     reindex_btn = gr.Button("重建索引", scale=1)
                                     delete_btn = gr.Button("删除", variant="stop", scale=1)
-                            with gr.Accordion("解析明细（页数、字符量、路由依据）", open=False):
+                            with gr.Accordion("解析明细", open=False):
                                 with gr.Row(elem_id="fb-parse-grid"):
                                     with gr.Column():
-                                        parse_summary = gr.Markdown("选择文档后显示。")
+                                        parse_summary = gr.Markdown(
+                                            view.get("summary") or "选择文档后显示。"
+                                        )
                                     with gr.Column():
-                                        parse_strip = gr.HTML("")
-                                parse_note = gr.Markdown("")
+                                        parse_strip = gr.HTML(view.get("strip", ""))
+                                parse_note = gr.Markdown(view.get("note", ""))
 
-                # ---- 分块地图 ----
                 with gr.Column(visible=False, elem_id="panel-chunks") as panel_chunks:
                     gr.HTML(page_head_html(
                         "分块地图",
-                        "每个块都是检索的最小单位。条形长度＝字数，颜色＝块类型；"
-                        "问答后被引用的块会标红并挂上引用序号。",
+                        "每个块的位置、字数与类型；问答时被引用的块会标红。",
                     ))
-                    chunk_summary = gr.Markdown()
-                    chunk_map = gr.HTML(chunk_map_html([]))
+                    chunk_summary = gr.Markdown(view.get("chunk_summary", ""))
+                    chunk_map = gr.HTML(view.get("map") or chunk_map_html([]))
                     with gr.Row(elem_id="fb-chunk-grid"):
-                        chunk_dd = gr.Dropdown(label="查看块", choices=[], value=None, scale=3)
+                        chunk_dd = gr.Dropdown(
+                            label="查看块", choices=view.get("chunk_choices", []),
+                            value=None, scale=3,
+                        )
                         chunk_box = gr.Textbox(label="块全文", lines=8, max_lines=24, scale=9)
 
-                # ---- 页级诊断（专业）----
                 with gr.Column(visible=False, elem_id="panel-pages") as panel_pages:
                     gr.HTML(page_head_html(
                         "页级诊断",
-                        "扫描页走 OCR、表格页走精排、图形页走图注模型——这张表就是路由依据。",
+                        "每页的文本量与结构信号，用于决定解析路由。",
                     ))
                     page_table = gr.Dataframe(
-                        headers=PAGE_HEADERS, interactive=False, wrap=True,
-                        label="每页的文本量与结构信号",
+                        headers=PAGE_HEADERS, value=view.get("page_rows", []),
+                        interactive=False, wrap=True, label="每页的文本量与结构信号",
                     )
 
-                # ---- 原文核对 ----
                 with gr.Column(visible=False, elem_id="panel-text") as panel_text:
                     gr.HTML(page_head_html(
                         "原文核对",
-                        "逐页对照识别结果。哪一页读错了，问题就出在这里。",
+                        "逐页查看识别结果。",
                     ))
                     with gr.Row(elem_id="fb-text-grid"):
-                        view_dd = gr.Dropdown(label="页码", choices=[], value=None, scale=2)
-                        page_box = gr.Textbox(label="单页原文", lines=18, max_lines=40, scale=10)
+                        view_dd = gr.Dropdown(
+                            label="页码", choices=view.get("pages", []),
+                            value=(view.get("pages") or [None])[0], scale=2,
+                        )
+                        page_box = gr.Textbox(
+                            label="单页原文", value=view.get("page_text", ""),
+                            lines=18, max_lines=40, scale=10,
+                        )
 
-                # ---- 检索指标（专业）----
                 with gr.Column(visible=False, elem_id="panel-metrics") as panel_metrics:
                     gr.HTML(page_head_html(
                         "检索指标",
-                        "在这份文档上分别跑两种模式，只做检索、不调用生成模型。"
-                        "命中率回答「找得到吗」，MRR 回答「排得靠前吗」。"
-                        "题目可以自动出：从每个块里生成一道只能靠该页回答的问题，页码就是标准答案。",
+                        "在同一份文档上分别运行两种模式，只做检索、不调用生成模型。"
+                        "题目可由模型自动生成，页码即标准答案。",
                     ))
                     with gr.Row(elem_id="fb-metrics-bar"):
                         gen_btn = gr.Button("自动出题并评测", variant="primary", scale=2)
@@ -883,16 +883,13 @@ def build_ui(service: Service) -> gr.Blocks:
                             choices=_doc_choices(service), multiselect=True, value=[], scale=4,
                         )
                     gen_note = gr.Markdown(elem_id="fb-gen-note")
-                    metrics_btn = gr.Button("只跑 golden.jsonl（示例题集）", scale=1)
-                    metrics_md = gr.Markdown(
-                        "还没有跑过。示例库上的参考值：快速 MRR 0.972、增强 MRR 1.000（21 题）。"
-                    )
+                    metrics_btn = gr.Button("运行示例题集", scale=1)
+                    metrics_md = gr.Markdown("尚未运行。")
 
-                # ---- 运行状态 ----
                 with gr.Column(visible=False, elem_id="panel-system") as panel_system:
                     gr.HTML(page_head_html(
                         "运行状态",
-                        "模型是否就绪、索引有多大、这个会话花了多少 token，都在这里。",
+                        "模型状态、索引规模与用量。",
                     ))
                     with gr.Row(elem_id="fb-keybar"):
                         key_box = gr.Textbox(
@@ -902,8 +899,8 @@ def build_ui(service: Service) -> gr.Blocks:
                         key_btn = gr.Button("应用", scale=1)
                         sys_btn = gr.Button("刷新状态", scale=1)
                     key_md = gr.Markdown(
-                        "克隆仓库后没有 `.env` 也能用：在这里贴一次 Key 即可。"
-                        "问答、向量、精排、视觉共用这一把，长期使用建议写进 `.env` 的 `SILICONFLOW_API_KEY`。"
+                        "临时 Key 只保存在内存中，重启后失效；"
+                        "长期使用请写入 `.env` 的 `SILICONFLOW_API_KEY`。"
                     )
                     sys_md = gr.Markdown(_system_markdown(service))
 
@@ -998,20 +995,20 @@ def build_ui(service: Service) -> gr.Blocks:
             chunks = [c for c in service.library.records if c.doc_id == doc["id"]]
             if doc["scan_like_pages"]:
                 note = (
-                    f"- 有 {len(doc['scan_like_pages'])} 页文字量低于阈值，"
-                    "用视觉模型重读会更完整：勾选「入库后立即增强」，或换一份更清晰的扫描件。"
+                    f"- {len(doc['scan_like_pages'])} 页文字量低于阈值，"
+                    "可用增强识别重读；或在「解析明细」中核对每页字符量。"
                 )
             else:
-                note = "- 文本层完整，没有需要 OCR 的页；表格页与图形页的信号见第 4 步。"
+                note = "- 文本层完整，没有需要 OCR 的页。"
             return (
                 f"当前文档：**{doc['filename']}**（{doc['page_count']} 页 · "
-                f"{len(chunks)} 块）。解析细节见「② 解析结果」。",
+                f"{len(chunks)} 块）。",
                 _doc_summary(doc),
                 page_strip_html(doc),
                 rows,
                 pages,
                 chunk_map_html(chunks),
-                chunk_summary_md(chunks) or "尚未建立索引：回到第 1 步点「重建索引」。",
+                chunk_summary_md(chunks) or "尚未建立索引。",
                 _update(choices=[(f"#{c.idx} · {c.chars} 字 · {c.kind}", c.idx) for c in chunks], value=None),
                 _update(choices=pages, value=None),
                 note,
@@ -1132,7 +1129,7 @@ def build_ui(service: Service) -> gr.Blocks:
             if not service.library.records:
                 history = history + [
                     {"role": "user", "content": message},
-                    {"role": "assistant", "content": "索引为空：请先在「文档工作台」上传文件并建立索引。"},
+                    {"role": "assistant", "content": "索引为空：请先在「文档与解析」上传文件并建立索引。"},
                 ]
                 yield (
                     history, "", render_trace(plan, mode_value), "索引为空，无法检索。", [],
@@ -1151,7 +1148,7 @@ def build_ui(service: Service) -> gr.Blocks:
 
             def step(key: str, status: str = "running", detail: str = "", meta: str = "") -> None:
                 if key not in steps:
-                    steps[key] = {"key": key, "title": STEP_TITLES[key][0]}
+                    steps[key] = {"key": key, "title": STEP_TITLES[key]}
                     order.append(key)
                 steps[key].update(status=status, detail=detail, meta=meta)
 
@@ -1178,7 +1175,7 @@ def build_ui(service: Service) -> gr.Blocks:
                     stage = event["stage"]
 
                     if stage == "rewrite_start":
-                        step("rewrite", "running", "读取对话历史，判断是否需要补全指代…")
+                        step("rewrite", "running", "分析上下文")
                         yield view(False)
 
                     elif stage == "rewrite_done":
@@ -1189,7 +1186,7 @@ def build_ui(service: Service) -> gr.Blocks:
                         elif event.get("error"):
                             step("rewrite", "error", event["error"], f"{event['ms']:.0f} ms")
                         else:
-                            step("rewrite", "skip", "问题已完整，不需要改写", f"{event['ms']:.0f} ms")
+                            step("rewrite", "skip", "问题完整，不改写", f"{event['ms']:.0f} ms")
                         yield view(False)
 
                     elif stage == "embed_start":
@@ -1200,12 +1197,12 @@ def build_ui(service: Service) -> gr.Blocks:
                         if event.get("error"):
                             step("embed", "error", event["error"], f"{event['ms']:.0f} ms")
                         elif event.get("skipped"):
-                            step("embed", "skip", "未配置向量模型，只用关键词检索", "0 ms")
+                            step("embed", "skip", "未配置向量模型，仅关键词检索", "0 ms")
                         else:
                             step(
                                 "embed",
                                 "done",
-                                f"{event['dim']} 维 · L2 范数 {event['norm']}（已归一化）"
+                                f"{event['dim']} 维 · L2 范数 {event['norm']}"
                                 f" · 消耗 {event['tokens']} tokens",
                                 f"{event['ms']:.0f} ms",
                             )
@@ -1213,9 +1210,9 @@ def build_ui(service: Service) -> gr.Blocks:
 
                     elif stage == "dense_start":
                         if mode_value == "fast":
-                            step("retrieve", "running", f"与 {event.get('vectors', 0)} 个块向量比余弦…")
+                            step("retrieve", "running", f"比对 {event.get('vectors', 0)} 个块向量")
                         else:
-                            step("dense", "running", f"与 {event.get('vectors', 0)} 个块向量比较余弦相似度")
+                            step("dense", "running", f"比对 {event.get('vectors', 0)} 个块向量")
                         yield view(False)
 
                     elif stage == "dense_done":
@@ -1258,7 +1255,7 @@ def build_ui(service: Service) -> gr.Blocks:
                         yield view(False)
 
                     elif stage == "rerank_start":
-                        step("rerank", "running", f"逐条重算 {event['candidates']} 个候选的相关性")
+                        step("rerank", "running", f"重排 {event['candidates']} 个候选")
                         yield view(False)
 
                     elif stage == "rerank_done":
@@ -1290,7 +1287,7 @@ def build_ui(service: Service) -> gr.Blocks:
                             step(
                                 "generate",
                                 "running",
-                                "首个字已到达，正在流式输出…",
+                                "流式输出中",
                                 f"首字 {event.get('ttft_ms', 0):.0f} ms",
                             )
                         yield view()
@@ -1376,7 +1373,7 @@ def build_ui(service: Service) -> gr.Blocks:
                     question = item.get("content") or ""
                     break
             if not question.strip():
-                return "先在上面提一个问题，再回来对比两种模式。"
+                return "请先提出一个问题。"
             try:
                 report = service.compare_modes(question, doc_ids=scope or None, top_k=5)
             except ServiceError as exc:
@@ -1384,7 +1381,7 @@ def build_ui(service: Service) -> gr.Blocks:
             return compare_markdown(report)
 
         def _both_modes(doc_ids, questions, progress, base=0.0):
-            """两种模式各跑一次，共用同一批题目。返回 (markdown, 错误信息)。"""
+            """Run both modes on the same questions. Returns (markdown, error)."""
             labels = {"fast": MODE_CHOICES[0][0], "enhanced": MODE_CHOICES[1][0]}
             parts: list[str] = []
             for index, mode_name in enumerate(("fast", "enhanced"), start=1):
@@ -1403,14 +1400,9 @@ def build_ui(service: Service) -> gr.Blocks:
             if error:
                 return error
             progress(1.0, desc="完成")
-            return (
-                body
-                + "\n\n> 两组数字用同一批题目、同一个 top_k，只有候选池宽度和精排开关不同，"
-                "所以差值可以直接读成「增强换来了什么」。"
-            )
+            return body
 
         def on_generate(scope, count, progress=gr.Progress()):
-            """出题 → 立刻用同一批题跑两种模式。没有人工标注也能看到自己文档的真实数字。"""
             doc_ids = scope or None
             try:
                 bundle = service.generate_questions(
@@ -1428,8 +1420,8 @@ def build_ui(service: Service) -> gr.Blocks:
             questions = bundle["questions"]
             if not questions:
                 return (
-                    "**一道题也没生成。** 模型没有返回可解析的 JSON——常见原因是 Key 无效（401）"
-                    "或额度不足。先去「运行状态」确认 Key，再回来点一次。",
+                    "**未生成题目。** 模型未返回可解析的结果，"
+                    "请先在「运行状态」确认 Key 与额度。",
                     "", [],
                 )
 
@@ -1447,18 +1439,11 @@ def build_ui(service: Service) -> gr.Blocks:
             if error:
                 return note, error, questions
             progress(1.0, desc="完成")
-            return (
-                note,
-                body
-                + "\n\n> 标准答案是「这道题出自哪一页」，不是人写的参考答案——"
-                "所以命中率只说明检索有没有把那一页捞回来，不评价回答写得好不好。",
-                questions,
-            )
+            return note, body, questions
 
         # ================= bindings =================
 
         def on_chat_upload(files, current, progress=gr.Progress()):
-            """首页那排上传：默认就建索引，不需要用户懂"入库/索引"两步。"""
             result = on_upload(files, True, False, settings.ocr_max_pages, current, progress)
             return (*result, result[0], _update(value=None))
 
@@ -1557,10 +1542,9 @@ def build_ui(service: Service) -> gr.Blocks:
             settings.ocr_enabled = True
             if not settings.rerank_enabled:
                 settings.rerank_enabled = True
-            # 旧 Key 触发的熔断对新 Key 不成立，否则换完 Key 还得等 5 分钟
             was_paused = breaker_state()[0]
             reset_breaker()
-            reset_diagnosis()      # 旧的站点判断也可能已经不成立了
+            reset_diagnosis()
             return (
                 f"已应用 `{value[:6]}…{value[-4:]}`：问答、向量、精排、视觉都改用它。"
                 + ("已解除向量化的熔断，可以直接重试。" if was_paused else "")

@@ -1,13 +1,4 @@
-"""Colab 一键启动：写 .env、起服务、打印可点开的地址。
-
-由 colab.ipynb 调用，但**不依赖 Colab**——笔记本跑在本机也一样能用，
-只有开隧道那一步是 notebook 才需要的。
-
-设计上只做三件事，且都能重复执行：
-1. 有 .env 就改，没有就从 .env.example 复制一份（注释一起带过去）
-2. 起 uvicorn 线程（主线程留出来做交互，不再 `!python run.py` 卡死一格）
-3. 端口已经在听就不再起第二个，直接把地址重新打一遍
-"""
+"""Bootstrap the app inside a Colab runtime: env, server, tunnel."""
 
 from __future__ import annotations
 
@@ -23,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = ROOT / ".env"
 EXAMPLE_PATH = ROOT / ".env.example"
 
+ENV_MARKER = "# written by colab.ipynb"
+ENV_MARKER = "# written by colab.ipynb"
 KEY_NAME = "SILICONFLOW_API_KEY"
 TOKEN_NAME = "NGROK_AUTHTOKEN"
 
@@ -30,11 +23,7 @@ _SERVER = None
 _TUNNEL = ""
 
 
-# ── .env 读写 ────────────────────────────────────────────────
-
-
 def parse_env(text: str) -> dict[str, str]:
-    """只认 KEY=VALUE，注释和空行忽略；引号去掉。"""
     out: dict[str, str] = {}
     for line in text.splitlines():
         stripped = line.strip()
@@ -46,11 +35,6 @@ def parse_env(text: str) -> dict[str, str]:
 
 
 def patch_env(text: str, updates: dict[str, str]) -> str:
-    """就地替换 KEY=VALUE，保留原有注释、顺序和空行。
-
-    不直接 `>>` 追加：dotenv 是"后写的赢"，同一个键出现两行时用户读 .env
-    会以为上面那行还有效，排查起来非常费劲。
-    """
     if not updates:
         return text if text.endswith("\n") or not text else text + "\n"
 
@@ -68,18 +52,16 @@ def patch_env(text: str, updates: dict[str, str]) -> str:
 
     missing = [k for k in updates if k not in seen]
     if missing:
-        # 空文件不写分隔注释，否则从零生成的 .env 顶上会挂一行没上下文的标题
         if lines:
             if lines[-1].strip():
                 lines.append("")
-            lines.append("# ── 由 colab.ipynb 写入 ──")
+            lines.append(ENV_MARKER)
         lines.extend(f"{k}={updates[k]}" for k in missing)
 
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
 def write_env(api_key: str = "", ngrok_token: str = "", force: bool = False) -> dict:
-    """写 .env。默认只补空值，不覆盖用户手填的内容。"""
     if not EXAMPLE_PATH.exists():
         raise FileNotFoundError(f"缺少模板文件：{EXAMPLE_PATH}")
 
@@ -96,7 +78,7 @@ def write_env(api_key: str = "", ngrok_token: str = "", force: bool = False) -> 
     if updates:
         ENV_PATH.write_text(patch_env(text, updates), encoding="utf-8")
         try:
-            os.chmod(ENV_PATH, 0o600)  # 里面是 Key，别让同机其他用户读
+            os.chmod(ENV_PATH, 0o600)
         except OSError:
             pass
 
@@ -110,9 +92,6 @@ def write_env(api_key: str = "", ngrok_token: str = "", force: bool = False) -> 
     }
 
 
-# ── 取密钥：环境变量 → Colab Secrets → 手输 ───────────────────
-
-
 def read_secret(name: str) -> str:
     value = (os.environ.get(name) or "").strip()
     if value:
@@ -122,7 +101,6 @@ def read_secret(name: str) -> str:
 
         return (userdata.get(name) or "").strip()
     except Exception:
-        # 没有这个 Secret、或用户还没点"允许访问"，都走手输
         return ""
 
 
@@ -131,9 +109,6 @@ def _ask(prompt: str) -> str:
         return getpass.getpass(prompt).strip()
     except Exception:
         return ""
-
-
-# ── 端口与进程 ──────────────────────────────────────────────
 
 
 def port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.4) -> bool:
@@ -162,15 +137,11 @@ def _first_tunnel() -> str:
 
 
 def stop() -> None:
-    """停掉本 kernel 起的服务，下次 boot 才能换端口/换配置。"""
     global _SERVER, _TUNNEL
     if _SERVER is not None:
         _SERVER.should_exit = True
         _SERVER = None
     _TUNNEL = ""
-
-
-# ── 启动 ────────────────────────────────────────────────────
 
 
 def serve(port: int | None = None, tunnel: bool = True) -> str:
@@ -183,7 +154,6 @@ def serve(port: int | None = None, tunnel: bool = True) -> str:
     if _SERVER is not None:
         return _TUNNEL or f"http://127.0.0.1:{port}"
     if port_open(port):
-        # 上一格已经在跑（或上个 kernel 留下的）——不要再绑一次
         _TUNNEL = _first_tunnel()
         return _TUNNEL or f"http://127.0.0.1:{port}"
 
@@ -217,11 +187,6 @@ def serve(port: int | None = None, tunnel: bool = True) -> str:
 
 
 def _sync_live_settings(env_values: dict[str, str]) -> None:
-    """.env 改了但模块已经 import 过：把新值同步进内存里的 settings。
-
-    界面的"粘贴 Key"本来就是这么改的（app/ui.py），这些字段都是运行时读，
-    所以不用重启 kernel——重启一次 Colab 会话要重装依赖，代价太大。
-    """
     if "rag.config" not in sys.modules:
         return
     from rag.config import settings
@@ -275,7 +240,6 @@ def boot(
     port: int | None = None,
     ask: bool = True,
 ) -> str:
-    """笔记本里唯一的入口：拿 Key → 写 .env → 起服务 → 打印地址。"""
     if not api_key:
         api_key = read_secret(KEY_NAME)
     if not api_key and ask:

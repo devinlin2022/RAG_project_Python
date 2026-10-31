@@ -1,4 +1,4 @@
-"""Process-wide service instance. One index, shared by UI and API."""
+"""Process-wide service instance: one index shared by the UI and the API."""
 
 from rag.service import Service
 

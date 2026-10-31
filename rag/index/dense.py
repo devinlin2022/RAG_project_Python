@@ -1,8 +1,7 @@
 """Exact inner-product index over L2-normalised vectors.
 
-For a library below ~100k chunks a NumPy matrix already returns the exact
-top-k in one matmul, so FAISS' IndexFlatIP adds a dependency without changing
-a single score. The interface mirrors it: add / search / remove.
+Below ~100k chunks a NumPy matmul already returns the exact top-k, so the
+interface mirrors FAISS IndexFlatIP without the dependency: add, search, remove.
 """
 
 import numpy as np

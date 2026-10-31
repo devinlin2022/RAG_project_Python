@@ -1,9 +1,4 @@
-"""Page-level extraction and quality flags.
-
-`extract.py` turns a file into pages; this module decides what each page *is*
-(text / scanned / table / figure) and assembles the document object the rest of
-the app passes around.
-"""
+"""Page-level extraction and quality flags."""
 
 import hashlib
 import logging
@@ -88,11 +83,10 @@ def _signal(stats: dict, page_no: int) -> tuple[int, float, int]:
 
 
 def annotate(pages: list[dict], stats: dict) -> list[dict]:
-    """Flag pages as scan_like / table_like / figure_like.
+    """Flag pages as scan_like, table_like or figure_like.
 
-    scan_like does not mean "little text". A slide with 170 chars of bullets is
-    not a scan, and a slide whose table is an embedded image is one even though
-    it has 170 chars of title. The signal is text *versus picture area*.
+    scan_like is about text versus picture area, not about character count: a
+    slide with a title and an image of a table is still a scan.
     """
     for page in pages:
         tables, cover, ops = _signal(stats, page["page"])

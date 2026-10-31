@@ -1,4 +1,4 @@
-"""Dependency-free helpers, testable without installing anything."""
+"""Dependency-free helpers."""
 
 import re
 

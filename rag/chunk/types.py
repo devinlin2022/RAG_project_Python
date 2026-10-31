@@ -10,7 +10,7 @@ class Chunk:
     page_from: int
     page_to: int
     kind: str = "text"  # text | table | figure | ocr
-    section: str = ""  # heading path, e.g. "第一章 总则 > 第二条 适用范围"
+    section: str = ""
     level: int = 0
     strategy: str = ""
     merged_from: int = 1  # how many source sections were merged into this chunk

@@ -1,4 +1,4 @@
-"""BM25 over chunk tokens. ~40 lines, so the lexical rail needs no dependency."""
+"""BM25 over chunk tokens, with no external dependency."""
 
 import math
 from collections import Counter

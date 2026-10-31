@@ -1,7 +1,7 @@
 """Structure-first chunking, with an optional semantic pass inside a section.
 
-Never cut a clause; accumulate siblings up to the size budget; reset at the
-top-level ancestor so a chunk cannot straddle two chapters.
+Clauses are never cut; siblings accumulate up to the size budget; a chunk
+never straddles two top-level sections.
 """
 
 from rag.chunk.recursive import split_recursive

@@ -1,5 +1,4 @@
-"""Heading hierarchy for Chinese contracts and regulations. Regex only: no model,
-no network, about 1 ms per page."""
+"""Heading hierarchy for Chinese contracts and regulations. Regex only."""
 
 import re
 from dataclasses import dataclass
@@ -8,8 +7,6 @@ from rag.chunk.types import Section
 
 _CN_NUM = "一二三四五六七八九十百千零〇两"
 
-# Two numbering conventions coexist: 第X条 > 一、 > （一） > 1. and
-# 第X条 > 2.1 > （一） > （1）. Decimal ranks above （一）, depth from dot count.
 _PATTERNS: list[tuple[int, re.Pattern]] = [
     (1, re.compile(r"^(#{1})\s+(?=\S)")),
     (1, re.compile(rf"^(第\s*[{_CN_NUM}\d]+\s*(?:章|篇|部分))")),

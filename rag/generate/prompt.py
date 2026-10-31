@@ -1,4 +1,4 @@
-"""Prompts. Two entry points: page-scoped (V1) and chunk-scoped with citations."""
+"""Prompt builders: page-scoped and chunk-scoped with citations."""
 
 SYSTEM_PROMPT = """你是企业文档问答助手。严格遵守以下规则：
 1. 只能依据用户提供的【页面内容】回答，不得使用你的外部知识。
@@ -19,7 +19,7 @@ NO_CONTEXT_ANSWER = "资料中未提及该问题：当前知识库没有检索�
 
 
 def build_context(pages: list[dict]) -> str:
-    """Join pages with page-number prefixes (V1 page-scoped QA)."""
+    """Join pages with page-number prefixes for page-scoped answering."""
     blocks = []
     for page in pages:
         body = page["text"].strip() or "（本页无可提取文本）"

@@ -1,14 +1,9 @@
 """Multi-format extraction, fast path first.
 
-One contract for every file type: a list of page dicts, each with `page`,
-`text`, `chars`, `density`, plus the three signals the router needs
-(`tables`, `image_cover`, `vector_ops`). PDF gets real page numbers; formats
-that have no pages (docx / markdown / xlsx) are cut into virtual pages so
-citations, deletion and evaluation still work the same way.
-
-Speed matters here: this module is the difference between a 46-page contract
-taking 9 s and taking 2 s. PDF text comes from pdfium (C, ~20x pdfminer) and
-pdfplumber is only asked about pages that already look tabular.
+One contract for every file type: a list of page dicts with `page`, `text`,
+`chars`, `density` and the signals the router needs (`tables`, `image_cover`,
+`vector_ops`). PDF keeps real page numbers; formats without pages are cut into
+virtual pages so citations, deletion and evaluation behave the same.
 """
 
 import csv
@@ -158,12 +153,10 @@ def _column_ratio(text: str) -> float:
 
 
 def looks_tabular(page: dict) -> bool:
-    """Cheap pre-check before the expensive ruled-table scan.
+    """Cheap pre-check before the ruled-table scan.
 
     Text layout alone is not enough: pdfium renders a ruled table with single
-    spaces between cells, so a real table can look like a plain paragraph. The
-    stroke count is the giveaway -- a grid needs many path objects, prose needs
-    none. Both signals are already computed, so this test is free.
+    spaces between cells. The path count is the giveaway.
     """
     text = page["text"]
     if not text.strip():
@@ -178,12 +171,8 @@ def looks_tabular(page: dict) -> bool:
 def _table_shape_ok(table, page_area: float) -> bool:
     """Reject layout boxes that pdfplumber reports as tables.
 
-    A slide's coloured content blocks look exactly like a 2x2 table to the line
-    detector. Three cheap tests separate them from real tables:
-
-    - a table needs at least 3 rows or 3 columns (a 2x2 box is a layout)
-    - a single column is never a table
-    - a table covering ~the whole page is the page background, not a grid
+    A table needs at least 3 rows or 3 columns, more than one column, and must not
+    cover the whole page.
     """
     try:
         rows = len(table.rows)
@@ -205,11 +194,9 @@ def _table_shape_ok(table, page_area: float) -> bool:
 
 
 def scan_ruled_tables(path: Path, pages: list[dict]) -> int:
-    """Count pdfplumber-recognised tables, only on pages that look tabular.
+    """Count recognised tables, only on pages that look tabular.
 
-    The old code ran find_tables() on every page, which was the single largest
-    cost of ingesting a long PDF. Candidates are chosen from the text layout,
-    so a normal prose document costs zero extra passes.
+    Candidates come from the text layout, so a prose document costs no extra pass.
     """
     try:
         import pdfplumber
@@ -446,11 +433,7 @@ def _pptx_pages(path: Path) -> list[dict]:
 
 
 def _pptx_edges(slide, nodes: list[tuple[str, float, float]]) -> list[str]:
-    """Turn connectors into `A -> B` lines by matching endpoints to shapes.
-
-    A flowchart's value is the arrows, not the boxes: a list of node labels
-    answers "what are the steps" but not "what comes after approval".
-    """
+    """Turn connectors into `A -> B` lines by matching endpoints to shapes."""
     if not nodes:
         return []
 

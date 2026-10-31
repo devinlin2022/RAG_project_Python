@@ -1,8 +1,7 @@
-"""In-memory chunk library: text records, exact vector index, BM25 index.
+"""In-memory chunk library: text records, vector index and BM25 index.
 
-Loaded once at startup from SQLite, mutated on ingest / delete / re-index.
-Reads are lock-free (NumPy + immutable lists); writes take a lock so a Gradio
-handler and an HTTP request cannot interleave a rebuild.
+Loaded from SQLite at startup, mutated on ingest, delete and re-index. Reads
+are lock-free; writes take a lock so a rebuild cannot interleave with a query.
 """
 
 import logging

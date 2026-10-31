@@ -1,15 +1,4 @@
-"""把 401 / 402 / 404 翻译成人话：到底是 Key 错了、站点错了，还是模型 ID 错了。
-
-硅基流动有 .cn 和 .com 两个站，Key、模型目录、余额彼此独立。拿 .com 的 Key 打 .cn，
-平台回的是 `30014 Token is invalid`——一句和"Key 已失效"完全同形的话。人只能在
-"我 Key 填错了"和"平台抽风"之间来回猜，而真相是站点不对。
-
-所以这里做两件事：
-1. 401 时顺手拿同一个 Key 试另一个站点：那边要是通了，就直说站点错了。
-2. 404 时列出这个账号实际有的同类模型：bge-m3 在 .com 上确实不存在。
-
-两个探测都只发一次、结果缓存、永不抛异常——诊断本身绝不能变成新的故障源。
-"""
+"""Explain a failed API call: wrong site, missing model, missing scope."""
 
 from __future__ import annotations
 
@@ -28,7 +17,6 @@ _cache: dict[tuple[str, str], str] = {}
 
 
 def site_of(base_url: str) -> str:
-    """返回 'cn' / 'com' / ''。"""
     host = (base_url or "").lower()
     for name in SITES:
         if f"siliconflow.{name}" in host:
@@ -54,10 +42,8 @@ def _get(url: str, key: str):
 
 
 def key_site_mismatch(base_url: str, key: str) -> str:
-    """Key 其实属于另一个站点时返回一句提示，否则空串。"""
     if not key.strip():
         return ""
-    # 用了代理、自建网关或本地假平台时认不出站点，别瞎猜，也别偷偷发请求
     if not site_of(base_url):
         return ""
     other = other_site(base_url)
@@ -88,7 +74,6 @@ def key_site_mismatch(base_url: str, key: str) -> str:
 
 
 def model_alternatives(base_url: str, key: str, kind: str, limit: int = 4) -> list[str]:
-    """同站点上同类模型的候选 ID。kind: 'embed' / 'rerank' / 'chat' / 'vision'。"""
     cache_key = (f"alts:{kind}", base_url)
     if cache_key in _cache:
         cached = _cache[cache_key]
@@ -121,7 +106,6 @@ def model_alternatives(base_url: str, key: str, kind: str, limit: int = 4) -> li
 
 
 def explain_401(base_url: str, key: str) -> str:
-    """401 的完整解释：站点错就直说站点，否则提示换 Key。"""
     mismatch = key_site_mismatch(base_url, key)
     if mismatch:
         return mismatch
@@ -139,5 +123,4 @@ def explain_404(base_url: str, key: str, wanted: str, kind: str) -> str:
 
 
 def reset_cache() -> None:
-    """换 Key 或换地址后调用，避免继续给旧结论。"""
     _cache.clear()

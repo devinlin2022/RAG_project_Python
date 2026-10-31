@@ -1,4 +1,4 @@
-"""HTTP layer: request parsing, status codes, error mapping only."""
+"""HTTP layer: request parsing, status codes and error mapping."""
 
 import json
 import logging
@@ -318,7 +318,7 @@ def ask_stream(request: Request, payload: AskRequest) -> StreamingResponse:
     """Server-sent events, one JSON object per pipeline step.
 
     Stages: rewrite_* / embed_* / dense_* / sparse_* / fuse_done / rerank_* /
-    retrieved / delta / done / error. The UI renders them as a live trace.
+    retrieved / delta / done / error.
     """
 
     def events():
@@ -354,7 +354,7 @@ class PageAskRequest(BaseModel):
 
 @router.post("/ask-by-pages", dependencies=[Depends(rate_limit)])
 def ask_by_pages(payload: PageAskRequest) -> dict:
-    """V1 endpoint kept for compatibility: answer from hand-picked pages."""
+    """Answer from hand-picked pages, without retrieval."""
     doc = _require_doc(payload.doc_id)
     try:
         result = answer_by_pages(doc, payload.pages, payload.question)

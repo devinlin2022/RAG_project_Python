@@ -1,7 +1,7 @@
-"""Semantic chunking: break where meaning changes.
+"""Semantic chunking: break where neighbouring distances peak.
 
-Breakpoints come from a percentile of neighbour distances, not a fixed threshold:
-the distance scale depends on the embedding model.
+The breakpoint is a percentile rather than a fixed threshold, because the
+distance scale depends on the embedding model.
 """
 
 import logging
