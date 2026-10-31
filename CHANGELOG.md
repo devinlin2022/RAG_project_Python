@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.1 — 2026-10-31
+
+Colab 一键启动。
+
+**`colab.ipynb`**
+- 三格：取代码（clone / 已有就 `git pull --ff-only`）→ 装依赖 → `boot()`，
+  跑完直接把 ngrok 地址打出来
+- Key 从 Colab 左侧 Secrets 读（`SILICONFLOW_API_KEY` / `NGROK_AUTHTOKEN`），
+  没配就弹框让你粘，粘完直接回车也能跑（只解析 + 关键词检索）
+
+**`tools/colab.py`**
+- `boot()`：取 Key → 写 `.env` → 线程起 uvicorn → 打印状态块。服务跑在后台线程，
+  这一格几秒就返回，主线程留给交互（原来 `!python run.py` 会把整格占死）
+- `patch_env()` 就地改 `KEY=VALUE`，不 `>>` 追加——同一键出现两行时，dotenv 后写的赢，
+  用户会以为上面那行还有效
+- `write_env()` 只补空值，不覆盖手填内容；什么都不传时**不落盘**
+- 端口已经在听就不再绑一次，直接把地址重打一遍；`stop()` 真正关掉服务
+- 改了 `.env` 重跑一格就生效：把新 Key 同步进内存里的 `settings`
+  （和界面「粘贴 Key」用的是同一个可变字段），不用重启会话重装依赖
+
+**测试**
+- 新增 `tests/test_colab.py`（9 条）：`patch_env` 幂等、不覆盖已有值、
+  空手启动不落盘、`.ipynb` 结构合法且第一格可重复执行
+
 ## v1.3.0 — 2026-10-31
 
 界面重做：Gradio 只当控件与事件层，形态交给一套自己的 CSS 设计系统。

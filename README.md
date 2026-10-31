@@ -70,10 +70,26 @@ python run.py              # http://127.0.0.1:7860
 
 没有 `.env` 也能启动：界面「运行状态与用量」里可以直接粘贴 Key（只存内存），解析和关键词检索不花钱。
 
-在 Colab 上：
+在 Colab 上：打开 [`colab.ipynb`](colab.ipynb)，三格跑完就有地址。
+
+1. 左侧 🔑 里存两个 Secret：`SILICONFLOW_API_KEY`（必填）、`NGROK_AUTHTOKEN`（可选）
+2. 依次运行「取代码 → 装依赖 → 启动」
+
+第三格会打印 `https://xxxx.ngrok-free.app`，点开就是界面。服务在后台线程里跑，
+这一格几秒就返回；`from tools.colab import stop; stop()` 停掉。改了 `.env` 或换了 Key
+重跑这一格就生效，不用重启会话。
+
+不想用笔记本，手敲等价：
 
 ```python
 !pip install -r requirements.txt
+from tools.colab import boot
+boot()                                     # 取 Key → 写 .env → 起服务 → 打印地址
+```
+
+或者最原始的写法（会占住整格）：
+
+```python
 import os
 os.environ["SILICONFLOW_API_KEY"] = "sk-..."
 os.environ["NGROK_AUTHTOKEN"] = "..."      # 填了就自动开隧道，无需 NGROK_ENABLED
@@ -81,6 +97,7 @@ os.environ["NGROK_AUTHTOKEN"] = "..."      # 填了就自动开隧道，无需 N
 ```
 
 `APP_HOST` 会自动切到 `0.0.0.0`（检测到 Colab 或 ngrok），不需要手动改。
+没有 `NGROK_AUTHTOKEN` 时用 Colab 自带代理：`output.serve_kernel_port_as_window(7860)`。
 
 ## 配置
 
@@ -179,6 +196,7 @@ python -m eval.run_eval --doc demo-policy --top-k 5 --generate   # 追加引用�
 | 存储 | SQLite（WAL），float32 向量随块存 | 删文档就是一条 DELETE，不会索引漂移 |
 | 服务 | FastAPI + Gradio `mount_gradio_app` | 单进程单状态，界面与接口共用索引 |
 | 界面 | `app/ui.py` 结构 + `app/style.py` 设计系统 | 布局靠 CSS 栅格，主题/样式在挂载时注入，不依赖 Tailwind 构建 |
+| 启动 | `colab.ipynb` + `tools/colab.py` | 笔记本里 `!python run.py` 会把整格占死；改成后台线程，单元格几秒返回 |
 
 不用 LangChain / FAISS / rank-bm25：这条链路的价值就在分数与耗时可见，框架会把它们藏起来。
 
