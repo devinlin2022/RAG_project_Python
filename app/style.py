@@ -6,6 +6,8 @@ framework's own components keep working.
 
 from __future__ import annotations
 
+from app.loading import HEAD as LOADING_HEAD
+
 HEAD = """
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <style>
@@ -828,3 +830,4 @@ def _icon_vars() -> str:
 
 
 CSS = CSS + "\n" + _icon_vars()
+HEAD = HEAD + LOADING_HEAD

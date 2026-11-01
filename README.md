@@ -2,11 +2,11 @@
 
 把几十页的合同、制度、标书或汇报 PPT 变成可追问的问答服务：回答带页码引用，文档里没写的就说没有。
 
-![version](https://img.shields.io/badge/version-1.5.0-blue)
+![version](https://img.shields.io/badge/version-1.6.0-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![tests](https://img.shields.io/badge/tests-203%20passed-brightgreen)
 
-单进程运行，Gradio 界面与 FastAPI 接口共用同一份索引，一条命令启动。v1.5.0 是首个完整版本。
+单进程运行，Gradio 界面与 FastAPI 接口共用同一份索引，一条命令启动。
 
 ## 功能
 
@@ -16,6 +16,8 @@
 - **双模式** —— 快速（两路检索）与增强（改写 + 扩召回 + 精排），可切换、可同题对比
 - **自带评测** —— 从文档块自动出题，页码即标准答案，不依赖人工标注
 - **扫描件增强** —— 扫描页 OCR、图表描述、表格转 Markdown，按页路由，只对需要的页计费
+- **等待有回执** —— 解析、增强检索、出题评测都弹出遮罩：计时、阶段提示、滚动小知识，挡住重复点击
+- **模型有备选** —— 对话 / 精排 / 视觉各配 2 个备选，主模型下线时自动切换；向量模型可候选实测
 
 ## RAG 技术方案
 
@@ -42,6 +44,7 @@ cd RAG_project_Python
 pip install -r requirements.txt
 cp .env.example .env          # 只需填 SILICONFLOW_API_KEY
 python check_llm.py           # 校验 Key 与四条模型通道
+python check_llm.py --candidates  # 逐个实测主模型与备选（每个 1 次调用）
 python run.py                 # http://127.0.0.1:7860
 ```
 
@@ -73,6 +76,8 @@ docker run --rm -p 7860:7860 --env-file .env -v "$PWD/data:/app/data" rag-agent
 | `EMBED_MODEL` | `BAAI/bge-m3` | 向量模型 |
 | `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | 精排模型，置空则按融合分排序 |
 | `OCR_ENABLED` | `true` | 仅扫描页触发，纯文字文档不产生视觉费用 |
+| `LLM_FALLBACKS` 等 | 见 `.env.example` | 四条通道各 2 个备选；仅在模型下线（404 / 400-20012）时切换 |
+| `EMBED_CANDIDATES` | `bge-large-zh-v1.5` 等 | 只做候选实测，不自动切换——换向量模型要重建索引 |
 
 ## 接口
 

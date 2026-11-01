@@ -1,8 +1,10 @@
 """Verify .env against the live API: model ids, chat, embedding, rerank, vision.
 
-Usage:/n    python check_llm.py             # models + chat + embedding + rerank
-    python check_llm.py --ocr       # also one vision call
-    python check_llm.py --models    # print what this key can use
+Usage:
+    python check_llm.py                # models + chat + embedding + rerank
+    python check_llm.py --ocr          # also one vision call
+    python check_llm.py --candidates   # every fallback id, one call each
+    python check_llm.py --models       # print what this key can use
 """
 
 import sys
@@ -22,12 +24,13 @@ def show_config() -> None:
     print("== 当前配置 ==")
     print(f"SILICONFLOW_BASE_URL : {settings.llm_base_url}")
     print(f"SILICONFLOW_API_KEY  : {mask(settings.llm_api_key) if settings.llm_configured else '未配置'}")
-    print(f"LLM_MODEL            : {settings.llm_model}  (问答)")
-    print(f"EMBED_MODEL          : {settings.embed_model}  (向量)")
+    print(f"LLM_MODEL            : {settings.llm_model}  (问答，备选 {len(settings.llm_chain) - 1})")
+    print(f"EMBED_MODEL          : {settings.embed_model}  (向量，候选 {len(settings.embed_chain) - 1})")
     print(f"RERANK_MODEL         : {settings.rerank_model}  (精排, "
-          f"{'启用' if settings.rerank_enabled else '关闭'})")
-    print(f"OCR_MODEL            : {settings.ocr_model}  (扫描页转录, {settings.vision_state[1]})")
-    print(f"VISION_MODEL         : {settings.vision_model}  (图表描述)")
+          f"{'启用' if settings.rerank_enabled else '关闭'}，备选 {len(settings.rerank_chain) - 1})")
+    print(f"OCR_MODEL            : {settings.ocr_model}  (扫描页转录, {settings.vision_state[1]}，"
+          f"备选 {len(settings.ocr_chain) - 1})")
+    print(f"VISION_MODEL         : {settings.vision_model}  (图表描述，备选 {len(settings.vision_chain) - 1})")
 
 
 def fetch_models(headers: dict) -> list[str] | None:
@@ -48,24 +51,30 @@ def fetch_models(headers: dict) -> list[str] | None:
 
 
 def check_models(ids: list[str]) -> tuple[bool, list[str]]:
-    wanted: dict[str, list[str]] = {}
-    for model_id, role in (
-        (settings.llm_model, "问答"),
-        (settings.embed_model, "向量"),
-        (settings.rerank_model, "精排"),
-        (settings.ocr_model, "OCR"),
-        (settings.vision_model, "图表"),
-    ):
-        wanted.setdefault(model_id, []).append(role)
-
+    """Primary ids decide pass/fail; a missing fallback is only reported."""
+    groups = (
+        ("问答", settings.llm_chain),
+        ("向量", settings.embed_chain),
+        ("精排", settings.rerank_chain),
+        ("OCR", settings.ocr_chain),
+        ("图表", settings.vision_chain),
+    )
     print(f"\n== 模型可用性 ==\n平台可用模型 {len(ids)} 个")
-    for model_id, roles in wanted.items():
-        print(f"  {'OK  ' if model_id in ids else 'MISS'} {model_id:40s} ({'/'.join(roles)})")
+    primary_missing: list[str] = []
+    fallback_missing: list[str] = []
+    for role, chain in groups:
+        for position, model_id in enumerate(chain):
+            present = model_id in ids
+            tag = "OK  " if present else ("MISS" if position == 0 else "MISS-")
+            print(f"  {tag} {model_id:44s} ({role}{'' if position == 0 else '备选'})")
+            if not present:
+                (primary_missing if position == 0 else fallback_missing).append(model_id)
 
-    missing = [m for m in wanted if m not in ids]
-    if missing:
-        print("\n以上带 MISS 的模型 ID 在当前站点不存在。可用 `python check_llm.py --models` 查看现货。")
-    return not missing, missing
+    if primary_missing:
+        print("\n主模型不存在，对应通道会直接失败。`--models` 可查看当前站点现货。")
+    if fallback_missing:
+        print(f"备选模型有 {len(fallback_missing)} 个不存在，运行时会被跳过，不影响主模型。")
+    return not primary_missing, primary_missing
 
 
 def print_catalog(ids: list[str]) -> None:
@@ -170,6 +179,83 @@ def check_ocr() -> bool:
     return True
 
 
+def check_candidates(headers: dict) -> bool:
+    """One real call per configured id, so a dead fallback is known up front."""
+    from rag.ingest.ocr import OCR_PROMPT, vision_chat
+
+    print("\n== 候选模型实测 ==")
+    ok = True
+
+    for model_id in settings.llm_chain:
+        started = time.perf_counter()
+        try:
+            resp = requests.post(
+                settings.chat_completions_url,
+                json={"model": model_id, "messages": [{"role": "user", "content": "只回复 ok"}],
+                      "max_tokens": 8, "temperature": 0},
+                headers=headers,
+                timeout=settings.llm_timeout,
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"HTTP {resp.status_code} {resp.text[:80]}")
+            print(f"  OK   chat    {time.perf_counter() - started:5.1f}s  {model_id}")
+        except Exception as exc:
+            ok = False
+            print(f"  FAIL chat    {model_id}  {exc}")
+
+    base_dim = 0
+    for model_id in settings.embed_chain:
+        started = time.perf_counter()
+        try:
+            resp = requests.post(
+                settings.embed_url,
+                json={"model": model_id, "input": "连通性测试", "encoding_format": "float"},
+                headers=headers,
+                timeout=settings.llm_timeout,
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"HTTP {resp.status_code} {resp.text[:80]}")
+            dim = len(resp.json()["data"][0]["embedding"])
+            base_dim = base_dim or dim
+            note = "" if dim == base_dim else f"  ！维度与主模型 {base_dim} 不同，切换需重建索引"
+            print(f"  OK   embed   {time.perf_counter() - started:5.1f}s  {dim} 维  {model_id}{note}")
+        except Exception as exc:
+            ok = False
+            print(f"  FAIL embed   {model_id}  {exc}")
+
+    for model_id in settings.rerank_chain:
+        started = time.perf_counter()
+        try:
+            resp = requests.post(
+                settings.rerank_url,
+                json={"model": model_id, "query": "付款账期",
+                      "documents": ["验收合格后三十日内付款", "本页描述采购流程"],
+                      "top_n": 2},
+                headers=headers,
+                timeout=settings.rerank_timeout,
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"HTTP {resp.status_code} {resp.text[:80]}")
+            top = resp.json()["results"][0]
+            print(f"  OK   rerank  {time.perf_counter() - started:5.1f}s  "
+                  f"首位 {top['relevance_score']:.3f}  {model_id}")
+        except Exception as exc:
+            ok = False
+            print(f"  FAIL rerank  {model_id}  {exc}")
+
+    png = _probe_png()
+    for model_id in settings.vision_chain:
+        try:
+            result = vision_chat(png, OCR_PROMPT, [model_id])
+            got = " ".join(result.text.split())[:16]
+            print(f"  OK   vision  {result.ms / 1000:5.1f}s  {got!r}  {model_id}")
+        except Exception as exc:
+            ok = False
+            print(f"  FAIL vision  {model_id}  {exc}")
+
+    return ok
+
+
 def _probe_png() -> bytes:
     """Render one line of text on white, so the call is cheap."""
     import io
@@ -200,6 +286,8 @@ def main() -> int:
     if "--models" in sys.argv:
         print_catalog(ids)
         return 0
+    if "--candidates" in sys.argv:
+        return 0 if check_candidates(headers) else 2
 
     models_ok, _ = check_models(ids)
     print("\n== 连通性 ==")

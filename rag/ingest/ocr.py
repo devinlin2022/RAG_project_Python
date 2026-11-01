@@ -8,6 +8,7 @@ import requests
 
 from rag.config import settings
 from rag.ingest.render import image_block
+from rag.models import is_model_error
 from rag.net import post_json
 
 log = logging.getLogger(__name__)
@@ -49,77 +50,88 @@ class OcrResult:
         return not self.text.strip()
 
 
-def vision_chat(png: bytes, prompt: str, model: str) -> OcrResult:
+def vision_chat(png: bytes, prompt: str, models: list[str]) -> OcrResult:
+    """One image, one prompt, models tried in order on a retired id."""
     api_key = settings.ocr_api_key_resolved
     if not api_key:
         raise OcrError("未配置 SILICONFLOW_API_KEY，无法调用视觉模型（OCR 与问答共用同一把 Key）")
 
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": prompt}, image_block(png)],
-            }
-        ],
-        "temperature": 0.0,
-        "max_tokens": 2048,
-        "stream": False,
-    }
-    started = time.perf_counter()
-    try:
-        response = post_json(
-            settings.ocr_base_url_resolved + "/chat/completions",
-            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            payload,
-            settings.ocr_timeout,
-            # OCR_MIN_INTERVAL=0 means "no extra spacing beyond the global gate".
-            min_interval=max(settings.ocr_min_interval, settings.http_min_interval),
-            retries=settings.http_retries,
+    for index, model in enumerate(models):
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": prompt}, image_block(png)],
+                }
+            ],
+            "temperature": 0.0,
+            "max_tokens": 2048,
+            "stream": False,
+        }
+        started = time.perf_counter()
+        try:
+            response = post_json(
+                settings.ocr_base_url_resolved + "/chat/completions",
+                {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                payload,
+                settings.ocr_timeout,
+                # OCR_MIN_INTERVAL=0 means "no extra spacing beyond the global gate".
+                min_interval=max(settings.ocr_min_interval, settings.http_min_interval),
+                retries=settings.http_retries,
+            )
+        except requests.Timeout as exc:
+            raise OcrError(f"视觉模型超时（{settings.ocr_timeout}s），可调大 OCR_TIMEOUT") from exc
+        except Exception as exc:
+            raise OcrError(f"视觉模型请求失败：{exc}") from exc
+
+        elapsed = int((time.perf_counter() - started) * 1000)
+
+        if is_model_error(response.status_code, response.text) and index < len(models) - 1:
+            log.warning("vision model %s unavailable, trying %s", model, models[index + 1])
+            continue
+
+        if response.status_code == 401:
+            raise OcrError(
+                f"视觉模型拒绝了这个 Key（401）：当前模型 {model}、地址 {settings.ocr_base_url_resolved}。"
+                "请确认该 Key 已开通视觉模型权限"
+            )
+        if response.status_code == 402:
+            raise OcrError("账户余额不足（402），请先在控制台充值")
+        if response.status_code == 429:
+            raise OcrError("触发限流（429），请调大 OCR_MIN_INTERVAL 或减少 OCR_MAX_PAGES")
+        if response.status_code == 404:
+            raise OcrError(
+                f"视觉模型不存在（404）：{model}，请核对 OCR_MODEL / VISION_MODEL，"
+                "或用 OCR_FALLBACKS / VISION_FALLBACKS 指定备选"
+            )
+        if response.status_code >= 400:
+            raise OcrError(f"视觉模型返回 {response.status_code}：{response.text[:200]}")
+
+        try:
+            body = response.json()
+            text = body["choices"][0]["message"]["content"] or ""
+            usage = body.get("usage") or {}
+        except Exception as exc:
+            raise OcrError(f"视觉模型响应无法解析：{response.text[:200]}") from exc
+
+        return OcrResult(
+            text=text.strip(),
+            engine=model,
+            ms=elapsed,
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
         )
-    except requests.Timeout as exc:
-        raise OcrError(f"视觉模型超时（{settings.ocr_timeout}s），可调大 OCR_TIMEOUT") from exc
-    except Exception as exc:
-        raise OcrError(f"视觉模型请求失败：{exc}") from exc
 
-    elapsed = int((time.perf_counter() - started) * 1000)
-
-    if response.status_code == 401:
-        raise OcrError(
-            f"视觉模型拒绝了这个 Key（401）：当前模型 {model}、地址 {settings.ocr_base_url_resolved}。"
-            "请确认该 Key 已开通视觉模型权限"
-        )
-    if response.status_code == 402:
-        raise OcrError("账户余额不足（402），请先在控制台充值")
-    if response.status_code == 429:
-        raise OcrError("触发限流（429），请调大 OCR_MIN_INTERVAL 或减少 OCR_MAX_PAGES")
-    if response.status_code == 404:
-        raise OcrError(f"视觉模型不存在（404）：{model}，请核对 OCR_MODEL 或 VISION_MODEL")
-    if response.status_code >= 400:
-        raise OcrError(f"视觉模型返回 {response.status_code}：{response.text[:200]}")
-
-    try:
-        body = response.json()
-        text = body["choices"][0]["message"]["content"] or ""
-        usage = body.get("usage") or {}
-    except Exception as exc:
-        raise OcrError(f"视觉模型响应无法解析：{response.text[:200]}") from exc
-
-    return OcrResult(
-        text=text.strip(),
-        engine=model,
-        ms=elapsed,
-        prompt_tokens=int(usage.get("prompt_tokens") or 0),
-        completion_tokens=int(usage.get("completion_tokens") or 0),
-    )
+    raise OcrError("没有可用的视觉模型，请检查 OCR_MODEL 与 OCR_FALLBACKS")
 
 
 def ocr_page(png: bytes) -> OcrResult:
-    return vision_chat(png, OCR_PROMPT, settings.ocr_model)
+    return vision_chat(png, OCR_PROMPT, settings.ocr_chain)
 
 
 def describe_figure(png: bytes) -> OcrResult:
-    return vision_chat(png, FIGURE_PROMPT, settings.vision_model)
+    return vision_chat(png, FIGURE_PROMPT, settings.vision_chain)
 
 
 def ocr_local(png: bytes) -> OcrResult:

@@ -49,6 +49,10 @@ class Platform:
                 return JSONResponse(
                     {"code": 30014, "message": "Token is invalid."}, status_code=status
                 )
+            if str(body.get("model", "")).startswith("retired/"):
+                return JSONResponse(
+                    {"code": 20012, "message": "Model does not exist."}, status_code=400
+                )
             if not body.get("stream"):
                 return {
                     "choices": [{"message": {"content": "答案是 30 天。"}}],
@@ -80,6 +84,10 @@ class Platform:
         async def rerank(request: Request):
             body = await request.json()
             status = self._next("rerank")
+            if str(body.get("model", "")).startswith("retired/"):
+                return JSONResponse(
+                    {"code": 20012, "message": "Model does not exist."}, status_code=400
+                )
             if status != 200:
                 return JSONResponse({"message": "rate limited"}, status_code=status)
             docs = body["documents"]
@@ -214,3 +222,37 @@ def test_embed_batches_keep_order(platform):
     vectors = embed_client.embed_texts(texts, batch=2)
     assert len(vectors) == 5
     assert [round(vector[0], 2) for vector in vectors] == [0.1, 0.2, 0.1, 0.2, 0.1]
+
+
+def test_retired_chat_model_switches_to_fallback(platform, monkeypatch):
+    monkeypatch.setattr(settings, "llm_model", "retired/chat")
+    monkeypatch.setattr(settings, "llm_fallbacks", "ok/chat")
+    answer, _ = llm.chat([{"role": "user", "content": "hi"}])
+    assert "30 天" in answer
+    assert platform.hits("chat") == 2
+    assert llm.active_model() == "ok/chat"
+
+
+def test_retired_chat_model_streams_from_fallback(platform, monkeypatch):
+    monkeypatch.setattr(settings, "llm_model", "retired/chat")
+    monkeypatch.setattr(settings, "llm_fallbacks", "ok/chat")
+    pieces = list(llm.chat_stream([{"role": "user", "content": "hi"}]))
+    assert "".join(pieces) == "答案是 30 天。"
+    assert platform.hits("chat") == 2
+
+
+def test_401_does_not_walk_the_chain(platform, monkeypatch):
+    monkeypatch.setattr(settings, "llm_model", "retired/chat")
+    monkeypatch.setattr(settings, "llm_fallbacks", "ok/chat")
+    platform.scripts["chat"] = [401]
+    with pytest.raises(llm.LLMError):
+        llm.chat([{"role": "user", "content": "hi"}])
+    assert platform.hits("chat") == 1, "认证错误对整条链都成立，换模型没有意义"
+
+
+def test_retired_rerank_model_switches_to_fallback(platform, monkeypatch):
+    monkeypatch.setattr(settings, "rerank_model", "retired/rerank")
+    monkeypatch.setattr(settings, "rerank_fallbacks", "ok/rerank")
+    pairs = reranker.rerank("账期", ["a", "b"])
+    assert [index for index, _ in pairs] == [0, 1]
+    assert platform.hits("rerank") == 2

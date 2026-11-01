@@ -7,9 +7,13 @@ from typing import Iterator
 import requests
 
 from rag.config import settings
+from rag.models import is_model_error
 from rag.net import post_json
 
 log = logging.getLogger(__name__)
+
+# The id that last answered; equals the primary until a fallback kicks in.
+_active_model = ""
 
 
 class LLMError(RuntimeError):
@@ -25,7 +29,13 @@ def _headers() -> dict:
     }
 
 
-def _explain(response) -> LLMError:
+def active_model() -> str:
+    """The chat model that last answered, for the status panel."""
+    return _active_model or settings.llm_model
+
+
+def _explain(response, model: str | None = None) -> LLMError:
+    model = model or settings.llm_model
     detail = response.text.strip().replace("\n", " ")[:200]
     if response.status_code == 401:
         from rag.diagnose import explain_401
@@ -33,7 +43,7 @@ def _explain(response) -> LLMError:
         return LLMError(
             f"API Key 被拒绝（401）：{detail or '平台未说明原因'}。"
             f"当前 key 尾号 {settings.llm_api_key.strip()[-4:] or '空'}、"
-            f"地址 {settings.llm_url}、模型 {settings.llm_model}。"
+            f"地址 {settings.llm_url}、模型 {model}。"
             f"{explain_401(settings.llm_url, settings.llm_api_key)}"
             "问答、向量、精排、视觉共用 SILICONFLOW_API_KEY，改一处即可。"
         )
@@ -53,7 +63,7 @@ def _explain(response) -> LLMError:
 
         return LLMError(
             f"接口或模型不存在（404）：{detail}。"
-            + explain_404(settings.llm_url, settings.llm_api_key, settings.llm_model, "chat")
+            + explain_404(settings.llm_url, settings.llm_api_key, model, "chat")
             + "另外确认 SILICONFLOW_BASE_URL 以 /v1 结尾。"
         )
     return LLMError(f"HTTP {response.status_code}：{detail}")
@@ -65,48 +75,58 @@ def chat(
     max_tokens: int | None = None,
 ) -> tuple[str, dict]:
     """Return (answer, usage). Raises LLMError on failure."""
+    global _active_model
     headers = _headers()
-    payload = {
-        "model": settings.llm_model,
-        "messages": messages,
-        "stream": False,
-        "temperature": settings.temperature if temperature is None else temperature,
-        "max_tokens": settings.max_tokens if max_tokens is None else max_tokens,
-    }
+    chain = settings.llm_chain
 
-    try:
-        response = post_json(
-            settings.chat_completions_url,
-            headers,
-            payload,
-            settings.llm_timeout,
-            min_interval=settings.http_min_interval,
-            retries=settings.http_retries,
-        )
-    except requests.exceptions.RequestException as exc:
-        raise LLMError(f"网络请求失败：{exc}") from exc
+    for index, model in enumerate(chain):
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "temperature": settings.temperature if temperature is None else temperature,
+            "max_tokens": settings.max_tokens if max_tokens is None else max_tokens,
+        }
 
-    if response.status_code >= 400:
-        raise _explain(response)
+        try:
+            response = post_json(
+                settings.chat_completions_url,
+                headers,
+                payload,
+                settings.llm_timeout,
+                min_interval=settings.http_min_interval,
+                retries=settings.http_retries,
+            )
+        except requests.exceptions.RequestException as exc:
+            raise LLMError(f"网络请求失败：{exc}") from exc
 
-    try:
-        data = response.json()
-    except ValueError as exc:
-        raise LLMError("响应不是合法 JSON，请检查 LLM_BASE_URL") from exc
+        if response.status_code >= 400:
+            if is_model_error(response.status_code, response.text) and index < len(chain) - 1:
+                log.warning("chat model %s unavailable, trying %s", model, chain[index + 1])
+                continue
+            raise _explain(response, model)
 
-    choices = data.get("choices") or []
-    if not choices:
-        raise LLMError(f"响应缺少 choices 字段：{str(data)[:200]}")
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise LLMError("响应不是合法 JSON，请检查 LLM_BASE_URL") from exc
 
-    message = choices[0].get("message") or {}
-    content = message.get("content") or ""
-    if isinstance(content, list):  # some providers return content parts
-        content = "".join(
-            part.get("text", "") if isinstance(part, dict) else str(part)
-            for part in content
-        )
+        choices = data.get("choices") or []
+        if not choices:
+            raise LLMError(f"响应缺少 choices 字段：{str(data)[:200]}")
 
-    return content.strip() or "（模型返回空内容）", data.get("usage") or {}
+        message = choices[0].get("message") or {}
+        content = message.get("content") or ""
+        if isinstance(content, list):  # some providers return content parts
+            content = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part)
+                for part in content
+            )
+
+        _active_model = model
+        return content.strip() or "（模型返回空内容）", data.get("usage") or {}
+
+    raise LLMError("没有可用的问答模型，请检查 LLM_MODEL 与 LLM_FALLBACKS")
 
 
 def _post_stream(payload: dict, headers: dict):
@@ -129,34 +149,48 @@ def chat_stream(
     on_usage=None,
 ) -> Iterator[str]:
     """Yield content deltas as they arrive. Raises LLMError before the first token."""
+    global _active_model
     headers = _headers()
-    payload = {
-        "model": settings.llm_model,
-        "messages": messages,
-        "stream": True,
-        "temperature": settings.temperature if temperature is None else temperature,
-        "max_tokens": settings.max_tokens if max_tokens is None else max_tokens,
-        # Without this a streamed answer reports no token usage at all, and the
-        # UI would have nothing to show in the cost panel.
-        "stream_options": {"include_usage": True},
-    }
+    chain = settings.llm_chain
+    response = None
+    model = ""
 
-    try:
-        response = _post_stream(payload, headers)
-    except requests.exceptions.RequestException as exc:
-        raise LLMError(f"网络请求失败：{exc}") from exc
+    for index, model in enumerate(chain):
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+            "temperature": settings.temperature if temperature is None else temperature,
+            "max_tokens": settings.max_tokens if max_tokens is None else max_tokens,
+            # Without this a streamed answer reports no token usage at all, and the
+            # UI would have nothing to show in the cost panel.
+            "stream_options": {"include_usage": True},
+        }
 
-    if response.status_code == 400:
-        # Some OpenAI-compatible gateways reject stream_options outright.
-        payload.pop("stream_options", None)
         try:
             response = _post_stream(payload, headers)
+            if (response.status_code >= 400
+                    and not is_model_error(response.status_code, response.text)
+                    and response.status_code == 400):
+                # Some OpenAI-compatible gateways reject stream_options outright.
+                payload.pop("stream_options", None)
+                response.close()
+                response = _post_stream(payload, headers)
         except requests.exceptions.RequestException as exc:
             raise LLMError(f"网络请求失败：{exc}") from exc
 
-    if response.status_code >= 400:
-        raise _explain(response)
+        if response.status_code < 400:
+            break
+        if is_model_error(response.status_code, response.text) and index < len(chain) - 1:
+            log.warning("chat model %s unavailable, trying %s", model, chain[index + 1])
+            response.close()
+            continue
+        raise _explain(response, model)
 
+    if response is None or response.status_code >= 400:
+        raise LLMError("没有可用的问答模型，请检查 LLM_MODEL 与 LLM_FALLBACKS")
+
+    _active_model = model
     produced = False
     # Decode explicitly: an SSE response without a charset header makes requests
     # fall back to ISO-8859-1, which turns every Chinese character into mojibake.

@@ -10,6 +10,7 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from rag import __version__
+from rag.models import chain
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 VERSION = __version__
@@ -23,6 +24,16 @@ DEFAULT_RERANK = "BAAI/bge-reranker-v2-m3"
 # 272 chars, 7.7s vs 17.5s). Figures get the 32B model, which reasons about arrows.
 DEFAULT_OCR = "Qwen/Qwen3-VL-8B-Instruct"
 DEFAULT_VISION = "Qwen/Qwen3-VL-32B-Instruct"
+
+# Verified against api.siliconflow.cn with the demo policy. Tried only when the
+# primary id comes back as retired (404 / 400 code 20012), never on 401/402/429.
+DEFAULT_LLM_FALLBACKS = "deepseek-ai/DeepSeek-V3,Qwen/Qwen3-32B"
+DEFAULT_RERANK_FALLBACKS = "Qwen/Qwen3-Reranker-8B,Qwen/Qwen3-Reranker-0.6B"
+DEFAULT_OCR_FALLBACKS = "Qwen/Qwen3-VL-30B-A3B-Instruct,Qwen/Qwen3-VL-32B-Instruct"
+DEFAULT_VISION_FALLBACKS = "Qwen/Qwen3-VL-30B-A3B-Instruct,Qwen/Qwen3-VL-8B-Instruct"
+# Candidates for the embedding rail are not switched automatically: every stored
+# vector would have to be recomputed in the new space.
+DEFAULT_EMBED_CANDIDATES = "BAAI/bge-large-zh-v1.5,Qwen/Qwen3-Embedding-0.6B"
 
 
 class Settings(BaseSettings):
@@ -64,6 +75,29 @@ class Settings(BaseSettings):
     )
     vision_model: str = Field(
         DEFAULT_VISION, validation_alias=AliasChoices("VISION_MODEL", "vision_model")
+    )
+
+    # ── fallbacks: tried in order when a model id is retired ────────
+    # Comma separated. Chat, rerank and vision switch automatically; the
+    # embedding model is excluded because swapping it invalidates every vector
+    # already stored (see EMBED_MODEL in .env.example).
+    llm_fallbacks: str = Field(
+        DEFAULT_LLM_FALLBACKS, validation_alias=AliasChoices("LLM_FALLBACKS", "llm_fallbacks")
+    )
+    embed_candidates: str = Field(
+        DEFAULT_EMBED_CANDIDATES,
+        validation_alias=AliasChoices("EMBED_CANDIDATES", "embed_candidates"),
+    )
+    rerank_fallbacks: str = Field(
+        DEFAULT_RERANK_FALLBACKS,
+        validation_alias=AliasChoices("RERANK_FALLBACKS", "rerank_fallbacks"),
+    )
+    ocr_fallbacks: str = Field(
+        DEFAULT_OCR_FALLBACKS, validation_alias=AliasChoices("OCR_FALLBACKS", "ocr_fallbacks")
+    )
+    vision_fallbacks: str = Field(
+        DEFAULT_VISION_FALLBACKS,
+        validation_alias=AliasChoices("VISION_FALLBACKS", "vision_fallbacks"),
     )
 
     temperature: float = 0.2
@@ -167,6 +201,26 @@ class Settings(BaseSettings):
         return path
 
     # ── capability gates ────────────────────────────────────────────
+
+    @property
+    def llm_chain(self) -> list[str]:
+        return chain(self.llm_model, self.llm_fallbacks)
+
+    @property
+    def rerank_chain(self) -> list[str]:
+        return chain(self.rerank_model, self.rerank_fallbacks)
+
+    @property
+    def embed_chain(self) -> list[str]:
+        return chain(self.embed_model, self.embed_candidates)
+
+    @property
+    def ocr_chain(self) -> list[str]:
+        return chain(self.ocr_model, self.ocr_fallbacks)
+
+    @property
+    def vision_chain(self) -> list[str]:
+        return chain(self.vision_model, self.vision_fallbacks)
 
     @property
     def api_key(self) -> str:

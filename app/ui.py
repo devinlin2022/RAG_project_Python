@@ -10,6 +10,7 @@ from pathlib import Path
 
 import gradio as gr
 
+from app.loading import CLOSE_JS, open_js, open_js_mode, payload
 from app.style import CSS, HEAD
 from app.style import _ICON_PATHS as ICON_PATHS
 from rag.config import VERSION, settings
@@ -28,6 +29,51 @@ SOURCE_HEADERS = ["#", "文件", "页", "类型", "融合分", "向量", "BM25",
 COMPARE_HEADERS = ["模式", "命中块", "覆盖页", "页覆盖率", "首位分", "首位优势", "精排", "耗时"]
 
 MODE_CHOICES = [("快速检索", "fast"), ("增强检索", "enhanced")]
+
+# (seconds, what it is doing) — shown in the blocking dialog. The numbers are
+# measured, not aspirational: a step that lands early just swaps the line sooner.
+UPLOAD_PHASES = [
+    (0, "正在读取文件"),
+    (4, "正在解析版面、表格与扫描页"),
+    (15, "正在切块并计算向量"),
+    (45, "仍在处理，多文件或扫描件会更久"),
+]
+REINDEX_PHASES = [
+    (0, "正在重新切块"),
+    (3, "正在计算向量"),
+    (20, "块较多时会久一些"),
+]
+ASK_FAST_PHASES = [
+    (0, "正在检索相关页"),
+    (3, "正在生成回答"),
+    (12, "仍在生成，长文档会更久"),
+]
+ASK_ENHANCED_PHASES = [
+    (0, "正在改写问题"),
+    (2, "双路召回并融合"),
+    (6, "正在精排候选块"),
+    (10, "正在生成回答"),
+    (22, "仍在生成，长文档会更久"),
+]
+GEN_PHASES = [
+    (0, "正在从文档里取样"),
+    (3, "正在逐块出题"),
+    (12, "正在跑两种模式的评测"),
+    (40, "题目较多，会再等一会儿"),
+]
+METRIC_PHASES = [(0, "正在两种模式下检索"), (6, "正在统计命中与排序")]
+COMPARE_PHASES = [(0, "正在各检索一次"), (5, "正在对比命中页")]
+
+
+def _noop():
+    return None
+
+
+def _closes(event):
+    """Close the blocker when the event ends, including when it raises."""
+    event.then(fn=_noop, js=CLOSE_JS)
+    return event
+
 
 PLAN_STEPS = {
     "fast": ["embed", "retrieve", "generate"],
@@ -522,7 +568,10 @@ def _system_markdown(service: Service) -> str:
         f"batch {info['embedding']['batch']} × 并发 {info['embedding']['concurrency']}） |\n"
         f"| 精排模型 | `{info['rerank']['model']}`（{'可用' if info['rerank']['configured'] else '未启用'}） |\n"
         f"| 视觉 · 扫描页 | `{ocr['model']}`（{ocr['state']}） |\n"
-        f"| 视觉 · 图表 | `{ocr['vision_model']}`（并发 {ocr['concurrency']}） |\n\n"
+        f"| 视觉 · 图表 | `{ocr['vision_model']}`（并发 {ocr['concurrency']}） |\n"
+        f"| 备选模型 | 问答 {len(settings.llm_chain) - 1} · 向量 {len(settings.embed_chain) - 1}"
+        f" · 精排 {len(settings.rerank_chain) - 1} · 视觉 {len(settings.vision_chain) - 1}"
+        "（主模型失效时自动切换，向量需重建索引） |\n\n"
         "### 索引与用量\n\n"
         "| 项 | 值 |\n| --- | --- |\n"
         f"| 文档 / 块 / 向量 | {index['docs']} / {index['chunks']} / {index['vectors']} |\n"
@@ -1447,36 +1496,47 @@ def build_ui(service: Service) -> gr.Blocks:
             result = on_upload(files, True, False, settings.ocr_max_pages, current, progress)
             return (*result, result[0], _update(value=None))
 
-        chat_upload_btn.click(
+        _closes(chat_upload_btn.click(
             fn=on_chat_upload,
             inputs=[chat_upload, doc_state],
             outputs=[
                 status, doc_table, doc_dd, doc_state, chunk_state, chunk_map,
                 chunk_summary, chunk_dd, chat_scope, flow, chat_note, chat_upload,
             ],
-            show_progress=True,
-        )
+            show_progress="hidden",
+            js=open_js(
+                "正在解析并入库",
+                "解析 → 切块 → 向量化，完成后就能提问",
+                0, UPLOAD_PHASES,
+            ),
+        ))
 
-        upload_btn.click(
+        _closes(upload_btn.click(
             fn=on_upload,
             inputs=[upload, auto_index, do_enhance, limit_pages, doc_state],
             outputs=[
                 status, doc_table, doc_dd, doc_state, chunk_state, chunk_map,
                 chunk_summary, chunk_dd, chat_scope, flow,
             ],
-            show_progress=True,
-        )
-        doc_dd.change(
+            show_progress="hidden",
+            js=open_js(
+                "正在解析并入库",
+                "先读版面，再按选项建索引",
+                0, UPLOAD_PHASES,
+            ),
+        ))
+        _closes(doc_dd.change(
             fn=on_doc_change,
             inputs=[doc_dd],
             outputs=[
                 status, parse_summary, parse_strip, page_table, page_state, chunk_map,
                 chunk_summary, chunk_dd, view_dd, parse_note, flow,
             ],
-            show_progress=True,
-        )
+            show_progress="hidden",
+            js=open_js("正在加载文档", "读取解析结果与分块", 600),
+        ))
         view_dd.change(fn=on_page_view, inputs=[view_dd, doc_state], outputs=page_box)
-        delete_btn.click(
+        _closes(delete_btn.click(
             fn=on_delete,
             inputs=[doc_state],
             outputs=[
@@ -1484,13 +1544,16 @@ def build_ui(service: Service) -> gr.Blocks:
                 chunk_dd, view_dd, parse_note, flow, parse_summary, parse_strip,
                 page_table, chat_scope,
             ],
-        )
-        reindex_btn.click(
+            show_progress="hidden",
+            js=open_js("正在删除", "文档、分块与向量一起移除", 300),
+        ))
+        _closes(reindex_btn.click(
             fn=on_reindex,
             inputs=[doc_state, chunk_size],
             outputs=[status, doc_table, chunk_state, chunk_map, chunk_summary, chunk_dd, flow],
-            show_progress=True,
-        )
+            show_progress="hidden",
+            js=open_js("正在重建索引", "切块与向量都要重算", 0, REINDEX_PHASES),
+        ))
         chunk_dd.change(fn=on_chunk_view, inputs=[chunk_dd, chunk_state], outputs=chunk_box)
         mode.change(fn=on_mode_change, inputs=[mode], outputs=[trace, mode_badge])
 
@@ -1503,36 +1566,62 @@ def build_ui(service: Service) -> gr.Blocks:
                 inputs=None,
                 outputs=_nav_buttons + _nav_panels,
             )
-        metrics_btn.click(
-            fn=on_metrics, inputs=[metrics_scope, gen_state], outputs=metrics_md, show_progress=True
-        )
-        gen_btn.click(
+        _closes(metrics_btn.click(
+            fn=on_metrics,
+            inputs=[metrics_scope, gen_state],
+            outputs=metrics_md,
+            show_progress="hidden",
+            js=open_js("正在运行示例题集", "只做检索，不调用生成模型", 0, METRIC_PHASES),
+        ))
+        _closes(gen_btn.click(
             fn=on_generate,
             inputs=[metrics_scope, gen_count],
             outputs=[gen_note, metrics_md, gen_state],
-            show_progress=True,
-        )
+            show_progress="hidden",
+            js=open_js(
+                "正在出题并评测",
+                "先出题，再在两种模式下各检索一遍",
+                0, GEN_PHASES,
+            ),
+        ))
 
         _chat_outputs = [
             chatbot, chat_input, trace, answer_meta,
             source_table, hit_map, history_state, source_state, source_dd,
         ]
-        send_btn.click(
+        _ask_js = open_js_mode(
+            payload("正在检索并回答", "向量 + 关键词两路，按名次融合", 0, ASK_FAST_PHASES),
+            payload("正在增强检索", "改写 → 召回 → 精排 → 生成", 0, ASK_ENHANCED_PHASES),
+        )
+        _closes(send_btn.click(
             fn=on_chat,
             inputs=[chat_input, history_state, mode, chat_scope],
             outputs=_chat_outputs,
             show_progress="hidden",
-        )
-        chat_input.submit(
+            js=_ask_js,
+        ))
+        _closes(chat_input.submit(
             fn=on_chat,
             inputs=[chat_input, history_state, mode, chat_scope],
             outputs=_chat_outputs,
             show_progress="hidden",
-        )
+            js=_ask_js,
+        ))
         clear_btn.click(fn=on_clear, inputs=[mode], outputs=_chat_outputs)
         source_dd.change(fn=on_source_view, inputs=[source_dd, source_state], outputs=source_box)
-        compare_btn.click(fn=on_compare, inputs=[history_state, chat_scope], outputs=compare_md)
-        sys_btn.click(fn=lambda: _system_markdown(service), inputs=None, outputs=sys_md)
+        _closes(compare_btn.click(
+            fn=on_compare,
+            inputs=[history_state, chat_scope],
+            outputs=compare_md,
+            show_progress="hidden",
+            js=open_js("正在对比两种模式", "同一问题各检索一次，不生成回答", 0, COMPARE_PHASES),
+        ))
+        _closes(sys_btn.click(
+            fn=lambda: _system_markdown(service),
+            inputs=None,
+            outputs=sys_md,
+            js=open_js("正在刷新状态", "", 600),
+        ))
 
         def on_key(key):
             value = (key or "").strip()
